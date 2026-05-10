@@ -1266,6 +1266,79 @@ test('verification flow clicks resend before waiting for the next LuckMail /code
   ]);
 });
 
+test('verification flow waits for three empty Step 8 LuckMail /code results before resend', async () => {
+  const events = [];
+  let pollCalls = 0;
+
+  const helpers = api.createVerificationFlowHelpers({
+    addLog: async () => {},
+    chrome: { tabs: { update: async () => {} } },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    completeStepFromBackground: async () => {},
+    confirmCustomVerificationStepBypassRequest: async () => ({ confirmed: true }),
+    getHotmailVerificationPollConfig: () => ({}),
+    getHotmailVerificationRequestTimestamp: () => 0,
+    getState: async () => ({}),
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isStopError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    MAIL_2925_VERIFICATION_INTERVAL_MS: 15000,
+    MAIL_2925_VERIFICATION_MAX_ATTEMPTS: 15,
+    pollCloudflareTempEmailVerificationCode: async () => ({}),
+    pollHotmailVerificationCode: async () => ({}),
+    pollLuckmailVerificationCode: async (_step, _state, payload) => {
+      pollCalls += 1;
+      events.push(['poll', payload.maxAttempts, payload.intervalMs]);
+      if (pollCalls <= 3) {
+        throw new Error('步骤 8：LuckMail /code 接口暂未返回新的验证码。');
+      }
+      return {
+        code: '654321',
+        emailTimestamp: 123,
+      };
+    },
+    sendToContentScript: async (_source, message) => {
+      if (message.type === 'RESEND_VERIFICATION_CODE') {
+        events.push(['resend', message.step]);
+      }
+      return {};
+    },
+    sendToMailContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    setStepStatus: async () => {},
+    sleepWithStop: async (ms) => {
+      events.push(['sleep', ms]);
+    },
+    throwIfStopped: () => {},
+    VERIFICATION_POLL_MAX_ROUNDS: 5,
+  });
+
+  const result = await helpers.pollFreshVerificationCode(
+    8,
+    {
+      email: 'user@example.com',
+      lastLoginCode: null,
+    },
+    { provider: 'luckmail-api', label: 'LuckMail（API 购邮）' },
+    {
+      resendIntervalMs: 15000,
+    }
+  );
+
+  assert.equal(result.code, '654321');
+  assert.deepStrictEqual(events, [
+    ['poll', 1, 15000],
+    ['sleep', 15000],
+    ['poll', 1, 15000],
+    ['sleep', 15000],
+    ['poll', 1, 15000],
+    ['resend', 8],
+    ['sleep', 15000],
+    ['poll', 1, 15000],
+  ]);
+});
+
 test('verification flow notifies onResendRequestedAt when resend is triggered', async () => {
   const resendRequestedAtCalls = [];
   const stateUpdates = [];
