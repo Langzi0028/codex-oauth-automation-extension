@@ -1266,7 +1266,7 @@ test('verification flow clicks resend before waiting for the next LuckMail /code
   ]);
 });
 
-test('verification flow waits for three empty Step 8 LuckMail /code results before resend', async () => {
+test('verification flow polls Step 8 LuckMail /code without clicking auth-page resend', async () => {
   const events = [];
   let pollCalls = 0;
 
@@ -1333,10 +1333,48 @@ test('verification flow waits for three empty Step 8 LuckMail /code results befo
     ['poll', 1, 15000],
     ['sleep', 15000],
     ['poll', 1, 15000],
-    ['resend', 8],
     ['sleep', 15000],
     ['poll', 1, 15000],
   ]);
+});
+
+test('verification flow escalates exhausted Step 8 LuckMail polling to Step 7 restart without resend', async () => {
+  const events = [];
+
+  const helpers = createVerificationFlowTestHelpers({
+    pollLuckmailVerificationCode: async (_step, _state, payload) => {
+      events.push(['poll', payload.maxAttempts, payload.intervalMs]);
+      throw new Error('步骤 8：LuckMail /code 接口暂未返回新的验证码。');
+    },
+    sendToContentScript: async (_source, message) => {
+      if (message.type === 'RESEND_VERIFICATION_CODE') {
+        events.push(['resend', message.step]);
+      }
+      return {};
+    },
+    sleepWithStop: async (ms) => {
+      events.push(['sleep', ms]);
+    },
+  });
+
+  await assert.rejects(
+    () => helpers.pollFreshVerificationCode(
+      8,
+      {
+        email: 'user@example.com',
+        lastLoginCode: null,
+      },
+      { provider: 'luckmail-api', label: 'LuckMail（API 购邮）' },
+      {
+        maxAttempts: 4,
+        intervalMs: 15000,
+        resendIntervalMs: 0,
+      }
+    ),
+    /STEP8_RESTART_STEP7::.*LuckMail \/code/
+  );
+
+  assert.equal(events.some(([type]) => type === 'resend'), false);
 });
 
 test('verification flow does not immediately resend after a retryable Step 8 LuckMail /code error', async () => {

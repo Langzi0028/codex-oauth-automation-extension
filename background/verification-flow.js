@@ -3,6 +3,8 @@
 })(typeof self !== 'undefined' ? self : globalThis, function createBackgroundVerificationFlowModule() {
   const ICLOUD_MAIL_POLL_MIN_ATTEMPTS = 5;
   const ICLOUD_MAIL_POLL_TIMEOUT_MARGIN_MS = 25000;
+  const STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS = 20;
+  const STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS = 15000;
 
   function createVerificationFlowHelpers(deps = {}) {
     const {
@@ -880,10 +882,16 @@
         ...getVerificationPollPayload(step, state),
         ...cleanPollOverrides,
       };
-      const maxAttempts = Math.max(1, Number(basePayload.maxAttempts) || 1);
-      const intervalMs = Math.max(15000, Number(basePayload.intervalMs) || 15000);
+      const isStep8LuckmailLoginCode = Number(step) === 8;
+      const maxAttempts = isStep8LuckmailLoginCode
+        ? Math.max(1, Number(basePayload.maxAttempts) || STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS)
+        : Math.max(1, Number(basePayload.maxAttempts) || 1);
+      const intervalMs = Math.max(
+        STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS,
+        Number(basePayload.intervalMs) || STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS
+      );
       let lastError = null;
-      let consecutiveStep8RetryableCodeFailures = 0;
+      let lastStep8RetryableCodeError = null;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         throwIfStopped();
@@ -898,6 +906,21 @@
             throw err;
           }
 
+          if (isStep8LuckmailLoginCode) {
+            const shouldRequestResend = shouldRequestLuckmailResendBeforeRetry(err);
+            if (!shouldRequestResend) {
+              throw err;
+            }
+            lastStep8RetryableCodeError = err;
+            const canRetry = attempt < maxAttempts;
+            if (!canRetry) {
+              break;
+            }
+            await addLog(`步骤 ${step}：LuckMail 暂未获取到新的${getVerificationCodeLabel(step)}验证码，等待 ${Math.ceil(intervalMs / 1000)} 秒后继续轮询 /code 接口（${attempt + 1}/${maxAttempts}）...`, 'warn');
+            await sleepWithStop(intervalMs);
+            continue;
+          }
+
           lastError = err;
           const canRetry = attempt < maxAttempts;
           if (!canRetry) {
@@ -905,17 +928,10 @@
           }
 
           const shouldRequestResend = shouldRequestLuckmailResendBeforeRetry(err);
-          const delayedStep8RetryableCodeFailure = Number(step) === 8 && shouldRequestResend;
-          consecutiveStep8RetryableCodeFailures = delayedStep8RetryableCodeFailure
-            ? consecutiveStep8RetryableCodeFailures + 1
-            : 0;
-          const shouldDelayStep8LuckmailResend = delayedStep8RetryableCodeFailure
-            && consecutiveStep8RetryableCodeFailures < 3;
 
-          if (shouldRequestResend && !shouldDelayStep8LuckmailResend) {
+          if (shouldRequestResend) {
             try {
               await requestVerificationCodeResend(step, pollOverrides);
-              consecutiveStep8RetryableCodeFailures = 0;
             } catch (resendError) {
               if (isStopError(resendError)) {
                 throw resendError;
@@ -927,6 +943,12 @@
           await addLog(`步骤 ${step}：LuckMail 暂未获取到新的${getVerificationCodeLabel(step)}验证码，等待 ${Math.ceil(intervalMs / 1000)} 秒后继续轮询 /code 接口（${attempt + 1}/${maxAttempts}）...`, 'warn');
           await sleepWithStop(intervalMs);
         }
+      }
+
+      if (isStep8LuckmailLoginCode && lastStep8RetryableCodeError) {
+        throw new Error(
+          `STEP8_RESTART_STEP7::步骤 ${step}：LuckMail /code 在 ${maxAttempts} 次轮询后仍未返回新的${getVerificationCodeLabel(step)}验证码。最后一次原因：${lastStep8RetryableCodeError.message}`
+        );
       }
 
       throw lastError || new Error(`步骤 ${step}：无法获取新的${getVerificationCodeLabel(step)}验证码。`);

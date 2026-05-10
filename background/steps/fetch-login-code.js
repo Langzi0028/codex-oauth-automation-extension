@@ -4,6 +4,8 @@
   const MAIL_2925_FILTER_LOOKBACK_MS = 10 * 60 * 1000;
   const STEP8_ADD_EMAIL_URL = 'https://auth.openai.com/add-email';
   const STEP8_CURRENT_STEP_RECOVERY_MAX_ATTEMPTS = 3;
+  const STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS = 20;
+  const STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS = 15000;
 
   function createStep8Executor(deps = {}) {
     const {
@@ -595,7 +597,7 @@
         completionStep: visibleStep,
         filterAfterTimestamp: verificationFilterAfterTimestamp,
         sessionKey: verificationSessionKey,
-        disableTimeBudgetCap: mail.provider === '2925',
+        disableTimeBudgetCap: mail.provider === '2925' || mail.provider === LUCKMAIL_PROVIDER,
         getRemainingTimeMs: getStep8RemainingTimeResolver(preparedState?.oauthUrl || '', visibleStep),
         requestFreshCodeFirst: false,
         lastResendAt: latestResendAt,
@@ -610,10 +612,16 @@
         },
         targetEmail: fixedTargetEmail,
         resendIntervalMs: mail.provider === LUCKMAIL_PROVIDER
-          ? 15000
+          ? 0
           : ((mail.provider === HOTMAIL_PROVIDER || mail.provider === '2925')
             ? 0
             : STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS),
+        ...(mail.provider === LUCKMAIL_PROVIDER
+          ? {
+            maxAttempts: STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS,
+            intervalMs: STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS,
+          }
+          : {}),
       });
       return {
         lastResendAt: latestResendAt,
