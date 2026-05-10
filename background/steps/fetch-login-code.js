@@ -13,6 +13,7 @@
       CLOUD_MAIL_PROVIDER = 'cloudmail',
       completeStepFromBackground,
       confirmCustomVerificationStepBypass,
+      ensureLuckmailPurchaseForFlow,
       ensureMail2925MailboxSession,
       ensureIcloudMailSession,
       ensureStep8VerificationPageReady,
@@ -103,6 +104,76 @@
       return String(value || '').trim().toLowerCase();
     }
 
+    function getLuckmailPurchaseFromState(state = {}) {
+      return state?.currentLuckmailPurchase && typeof state.currentLuckmailPurchase === 'object'
+        ? state.currentLuckmailPurchase
+        : null;
+    }
+
+    function hasLuckmailPurchaseToken(state = {}) {
+      return Boolean(getLuckmailPurchaseFromState(state)?.token);
+    }
+
+    function normalizeLuckmailPurchaseEmail(purchase = {}) {
+      return normalizeStep8VerificationTargetEmail(purchase?.email_address || purchase?.email || '');
+    }
+
+    function assertLuckmailPurchaseMatchesStep8Target(visibleStep, purchase, options = {}) {
+      const purchaseEmail = normalizeLuckmailPurchaseEmail(purchase);
+      const displayedEmail = normalizeStep8VerificationTargetEmail(options.displayedEmail);
+      const targetEmail = normalizeStep8VerificationTargetEmail(options.targetEmail);
+      const expectedEmail = displayedEmail || targetEmail;
+      if (purchaseEmail && expectedEmail && purchaseEmail !== expectedEmail) {
+        throw new Error(`步骤 ${visibleStep}：LuckMail 当前邮箱 ${purchaseEmail} 与验证码页显示邮箱 ${expectedEmail} 不一致，已停止提交验证码。`);
+      }
+    }
+
+    async function ensureLuckmailPurchaseForStep8(state, visibleStep, options = {}) {
+      let nextState = state || {};
+      if (!hasLuckmailPurchaseToken(nextState) && typeof getState === 'function') {
+        const refreshedState = await getState();
+        nextState = {
+          ...nextState,
+          ...(refreshedState || {}),
+        };
+      }
+
+      let purchase = getLuckmailPurchaseFromState(nextState);
+      if (!purchase?.token) {
+        if (typeof ensureLuckmailPurchaseForFlow !== 'function') {
+          throw new Error(`步骤 ${visibleStep}：LuckMail 购邮助手未注入，无法准备登录验证码邮箱。`);
+        }
+
+        purchase = await ensureLuckmailPurchaseForFlow({ allowReuse: true });
+        const refreshedState = typeof getState === 'function' ? await getState() : null;
+        nextState = {
+          ...nextState,
+          ...(refreshedState || {}),
+        };
+      }
+
+      const statePurchase = getLuckmailPurchaseFromState(nextState);
+      if (statePurchase?.token) {
+        purchase = statePurchase;
+      } else if (purchase?.token) {
+        nextState = {
+          ...nextState,
+          currentLuckmailPurchase: purchase,
+        };
+      }
+
+      if (!purchase?.email_address || !purchase?.token) {
+        throw new Error(`步骤 ${visibleStep}：LuckMail 未返回可用邮箱或 token，无法轮询登录验证码。`);
+      }
+
+      assertLuckmailPurchaseMatchesStep8Target(visibleStep, purchase, options);
+      return {
+        ...nextState,
+        email: purchase.email_address || nextState?.email || '',
+        currentLuckmailPurchase: purchase,
+      };
+    }
+
     async function getLoginAuthStateFromContent(visibleStep, options = {}) {
       if (typeof sendToContentScriptResilient !== 'function') {
         return {};
@@ -184,12 +255,15 @@
         email: resolvedEmail,
         step8VerificationTargetEmail: displayedEmail,
       });
+      const refreshedState = typeof getState === 'function' ? await getState() : latestState;
 
       return {
         state: {
           ...latestState,
+          ...(refreshedState || {}),
           email: resolvedEmail,
           step8VerificationTargetEmail: displayedEmail,
+          oauthUrl: latestState?.oauthUrl || refreshedState?.oauthUrl || state?.oauthUrl || '',
         },
         pageState: {
           state: result?.directOAuthConsentPage ? 'oauth_consent_page' : 'verification_page',
@@ -439,8 +513,16 @@
         latestResendAt = Math.max(latestResendAt, preparedStateLastResendAt);
       }
 
-      const mail = getMailConfig(preparedState);
+      let mail = getMailConfig(preparedState);
       if (mail.error) throw new Error(mail.error);
+      if (pageState?.state === 'verification_page' && mail.provider === LUCKMAIL_PROVIDER) {
+        preparedState = await ensureLuckmailPurchaseForStep8(preparedState, visibleStep, {
+          displayedEmail: pageState?.displayedEmail || '',
+          targetEmail: preparedState?.step8VerificationTargetEmail || '',
+        });
+        mail = getMailConfig(preparedState);
+        if (mail.error) throw new Error(mail.error);
+      }
       const stepStartedAt = Date.now();
       const verificationFilterAfterTimestamp = mail.provider === '2925'
         ? Math.max(0, stepStartedAt - MAIL_2925_FILTER_LOOKBACK_MS)

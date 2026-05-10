@@ -194,6 +194,9 @@ test('step 8 routes only a real phone verification page through sms helper', asy
       calls.completions.push({ step, payload });
     },
     confirmCustomVerificationStepBypass: async () => {},
+    ensureLuckmailPurchaseForFlow: async () => {
+      throw new Error('real phone verification branch should not prepare LuckMail');
+    },
     ensureStep8VerificationPageReady: async () => ({ state: 'phone_verification_page' }),
     getOAuthFlowRemainingMs: async () => 5000,
     getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => defaultTimeoutMs,
@@ -352,6 +355,255 @@ test('step 8 submits add-email before polling the email verification code', asyn
   ]);
 });
 
+test('step 8 carries refreshed LuckMail purchase token from add-email into polling', async () => {
+  const purchase = {
+    email_address: 'new.user@example.com',
+    token: 'tok-step8',
+  };
+  let runtimeState = {
+    email: '',
+    password: 'secret',
+    oauthUrl: 'https://oauth.example/latest',
+    mailProvider: 'luckmail-api',
+  };
+  const calls = {
+    contentMessages: [],
+    ensureLuckmail: 0,
+    mailStates: [],
+    setStates: [],
+  };
+
+  const executor = api.createStep8Executor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        update: async () => {},
+      },
+    },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    confirmCustomVerificationStepBypass: async () => {},
+    ensureLuckmailPurchaseForFlow: async () => {
+      calls.ensureLuckmail += 1;
+      throw new Error('add-email refresh should reuse the purchase already stored by email resolution');
+    },
+    ensureStep8VerificationPageReady: async () => ({ state: 'add_email_page', url: 'https://auth.openai.com/add-email' }),
+    getOAuthFlowRemainingMs: async () => 5000,
+    getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => defaultTimeoutMs,
+    getMailConfig: (state) => {
+      calls.mailStates.push(state);
+      return {
+        provider: 'luckmail-api',
+        label: 'LuckMail（API 购邮）',
+      };
+    },
+    getState: async () => runtimeState,
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isTabAlive: async () => true,
+    isVerificationMailPollingError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    resolveSignupEmailForFlow: async (state, options = {}) => {
+      calls.resolveOptions = options;
+      runtimeState = {
+        ...state,
+        email: purchase.email_address,
+        currentLuckmailPurchase: purchase,
+      };
+      return purchase.email_address;
+    },
+    resolveVerificationStep: async (_step, state, _mail, options) => {
+      calls.resolvedVerification = { state, options };
+    },
+    rerunStep7ForStep8Recovery: async () => {},
+    reuseOrCreateTab: async () => {},
+    sendToContentScriptResilient: async (_source, message) => {
+      calls.contentMessages.push(message);
+      return {
+        submitted: true,
+        displayedEmail: purchase.email_address,
+        url: 'https://auth.openai.com/email-verification',
+      };
+    },
+    setState: async (payload) => {
+      calls.setStates.push(payload);
+      runtimeState = {
+        ...runtimeState,
+        ...payload,
+      };
+    },
+    shouldUseCustomRegistrationEmail: () => false,
+    STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS: 25000,
+    STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS: 8,
+    throwIfStopped: () => {},
+  });
+
+  await executor.executeStep8({
+    visibleStep: 8,
+    accountIdentifierType: 'phone',
+    oauthUrl: 'https://oauth.example/latest',
+  });
+
+  assert.equal(calls.resolveOptions.preserveAccountIdentity, true);
+  assert.equal(calls.ensureLuckmail, 0);
+  assert.equal(calls.mailStates[0].currentLuckmailPurchase.token, 'tok-step8');
+  assert.equal(calls.resolvedVerification.state.currentLuckmailPurchase.token, 'tok-step8');
+  assert.equal(calls.resolvedVerification.options.targetEmail, purchase.email_address);
+});
+
+test('step 8 prepares LuckMail purchase before direct login-code polling', async () => {
+  const purchase = {
+    email_address: 'step8.user@example.com',
+    token: 'tok-direct-step8',
+  };
+  let runtimeState = {
+    email: '',
+    password: 'secret',
+    oauthUrl: 'https://oauth.example/latest',
+    mailProvider: 'luckmail-api',
+  };
+  const calls = {
+    ensureOptions: [],
+    mailStates: [],
+  };
+
+  const executor = api.createStep8Executor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        update: async () => {},
+      },
+    },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    confirmCustomVerificationStepBypass: async () => {},
+    ensureLuckmailPurchaseForFlow: async (options = {}) => {
+      calls.ensureOptions.push(options);
+      runtimeState = {
+        ...runtimeState,
+        email: purchase.email_address,
+        currentLuckmailPurchase: purchase,
+      };
+      return purchase;
+    },
+    ensureStep8VerificationPageReady: async () => ({ state: 'verification_page', displayedEmail: purchase.email_address }),
+    getOAuthFlowRemainingMs: async () => 5000,
+    getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => defaultTimeoutMs,
+    getMailConfig: (state) => {
+      calls.mailStates.push(state);
+      return {
+        provider: 'luckmail-api',
+        label: 'LuckMail（API 购邮）',
+      };
+    },
+    getState: async () => runtimeState,
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isTabAlive: async () => true,
+    isVerificationMailPollingError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    resolveVerificationStep: async (_step, state, _mail, options) => {
+      calls.resolvedVerification = { state, options };
+    },
+    rerunStep7ForStep8Recovery: async () => {},
+    reuseOrCreateTab: async () => {},
+    setState: async (payload) => {
+      runtimeState = {
+        ...runtimeState,
+        ...payload,
+      };
+    },
+    shouldUseCustomRegistrationEmail: () => false,
+    STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS: 25000,
+    STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS: 8,
+    throwIfStopped: () => {},
+  });
+
+  await executor.executeStep8({
+    visibleStep: 8,
+    password: 'secret',
+    oauthUrl: 'https://oauth.example/latest',
+    mailProvider: 'luckmail-api',
+  });
+
+  assert.deepStrictEqual(calls.ensureOptions, [{ allowReuse: true }]);
+  assert.equal(calls.resolvedVerification.state.email, purchase.email_address);
+  assert.equal(calls.resolvedVerification.state.currentLuckmailPurchase.token, 'tok-direct-step8');
+  assert.equal(calls.resolvedVerification.options.targetEmail, purchase.email_address);
+});
+
+test('step 8 stops LuckMail polling when displayed email differs from purchase email', async () => {
+  const purchase = {
+    email_address: 'other.user@example.com',
+    token: 'tok-other-step8',
+  };
+  let runtimeState = {
+    email: '',
+    password: 'secret',
+    oauthUrl: 'https://oauth.example/latest',
+    mailProvider: 'luckmail-api',
+  };
+  const calls = {
+    resolveVerification: 0,
+  };
+
+  const executor = api.createStep8Executor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        update: async () => {},
+      },
+    },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    confirmCustomVerificationStepBypass: async () => {},
+    ensureLuckmailPurchaseForFlow: async () => {
+      runtimeState = {
+        ...runtimeState,
+        email: purchase.email_address,
+        currentLuckmailPurchase: purchase,
+      };
+      return purchase;
+    },
+    ensureStep8VerificationPageReady: async () => ({ state: 'verification_page', displayedEmail: 'shown.user@example.com' }),
+    getOAuthFlowRemainingMs: async () => 5000,
+    getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => defaultTimeoutMs,
+    getMailConfig: () => ({
+      provider: 'luckmail-api',
+      label: 'LuckMail（API 购邮）',
+    }),
+    getState: async () => runtimeState,
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isTabAlive: async () => true,
+    isVerificationMailPollingError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    resolveVerificationStep: async () => {
+      calls.resolveVerification += 1;
+    },
+    rerunStep7ForStep8Recovery: async () => {},
+    reuseOrCreateTab: async () => {},
+    setState: async (payload) => {
+      runtimeState = {
+        ...runtimeState,
+        ...payload,
+      };
+    },
+    shouldUseCustomRegistrationEmail: () => false,
+    STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS: 25000,
+    STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS: 8,
+    throwIfStopped: () => {},
+  });
+
+  await assert.rejects(
+    () => executor.executeStep8({
+      visibleStep: 8,
+      password: 'secret',
+      oauthUrl: 'https://oauth.example/latest',
+      mailProvider: 'luckmail-api',
+    }),
+    /LuckMail.*shown\.user@example\.com.*other\.user@example\.com|LuckMail.*other\.user@example\.com.*shown\.user@example\.com/
+  );
+  assert.equal(calls.resolveVerification, 0);
+});
+
 test('Plus login-code step reuses step 8 verification logic but completes visible step 11', async () => {
   let resolvedStep = null;
   let resolvedOptions = null;
@@ -447,6 +699,9 @@ test('step 8 completes directly when auth page is already on OAuth consent page'
       events.completeCalls.push({ step, payload });
     },
     confirmCustomVerificationStepBypass: async () => {},
+    ensureLuckmailPurchaseForFlow: async () => {
+      throw new Error('oauth consent branch should not prepare LuckMail');
+    },
     ensureStep8VerificationPageReady: async () => ({
       state: 'oauth_consent_page',
     }),

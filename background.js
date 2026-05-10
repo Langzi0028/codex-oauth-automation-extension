@@ -11257,6 +11257,7 @@ const step8Executor = self.MultiPageBackgroundStep8?.createStep8Executor({
   CLOUD_MAIL_PROVIDER,
   completeStepFromBackground,
   confirmCustomVerificationStepBypass: verificationFlowHelpers.confirmCustomVerificationStepBypass,
+  ensureLuckmailPurchaseForFlow,
   ensureMail2925MailboxSession,
   ensureIcloudMailSession: ensureIcloudMailSessionForVerification,
   ensureStep8VerificationPageReady,
@@ -11593,8 +11594,8 @@ async function ensureSignupPostEmailPageReadyInTab(tabId, step = 2, options = {}
   return signupFlowHelpers.ensureSignupPostEmailPageReadyInTab(tabId, step, options);
 }
 
-async function resolveSignupEmailForFlow(state) {
-  return signupFlowHelpers.resolveSignupEmailForFlow(state);
+async function resolveSignupEmailForFlow(state, options = {}) {
+  return signupFlowHelpers.resolveSignupEmailForFlow(state, options);
 }
 
 // ============================================================

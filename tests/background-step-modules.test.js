@@ -20,3 +20,20 @@ test('background imports step 1~10 modules', () => {
     assert.match(source, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });
 });
+
+test('background wires LuckMail purchase helper into step 8 executor', () => {
+  const source = fs.readFileSync('background.js', 'utf8');
+  const match = source.match(/const step8Executor = self\.MultiPageBackgroundStep8\?\.createStep8Executor\(\{([\s\S]*?)\n\}\);/);
+
+  assert.ok(match, 'missing step 8 executor wiring block');
+  assert.match(match[1], /\bensureLuckmailPurchaseForFlow,/);
+});
+
+test('background forwards signup email resolution options', () => {
+  const source = fs.readFileSync('background.js', 'utf8');
+
+  assert.match(
+    source,
+    /async function resolveSignupEmailForFlow\(state, options = \{\}\) \{\s*return signupFlowHelpers\.resolveSignupEmailForFlow\(state, options\);\s*\}/,
+  );
+});
