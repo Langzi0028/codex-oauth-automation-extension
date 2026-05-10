@@ -869,10 +869,6 @@
       return !/没有可用 token|token 对应邮箱与当前邮箱不一致/i.test(message);
     }
 
-    function isLuckmailEmptyCodeResult(error) {
-      return /LuckMail \/code 接口暂未返回新的验证码/.test(String(error?.message || error || ''));
-    }
-
     async function pollLuckmailVerificationCodeWithResend(step, state, pollOverrides = {}) {
       const {
         onResendRequestedAt,
@@ -887,7 +883,7 @@
       const maxAttempts = Math.max(1, Number(basePayload.maxAttempts) || 1);
       const intervalMs = Math.max(15000, Number(basePayload.intervalMs) || 15000);
       let lastError = null;
-      let consecutiveStep8EmptyCodeResults = 0;
+      let consecutiveStep8RetryableCodeFailures = 0;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         throwIfStopped();
@@ -908,17 +904,18 @@
             break;
           }
 
-          const delayedStep8EmptyCodeResult = Number(step) === 8 && isLuckmailEmptyCodeResult(err);
-          consecutiveStep8EmptyCodeResults = delayedStep8EmptyCodeResult
-            ? consecutiveStep8EmptyCodeResults + 1
+          const shouldRequestResend = shouldRequestLuckmailResendBeforeRetry(err);
+          const delayedStep8RetryableCodeFailure = Number(step) === 8 && shouldRequestResend;
+          consecutiveStep8RetryableCodeFailures = delayedStep8RetryableCodeFailure
+            ? consecutiveStep8RetryableCodeFailures + 1
             : 0;
-          const shouldDelayStep8LuckmailResend = delayedStep8EmptyCodeResult
-            && consecutiveStep8EmptyCodeResults < 3;
+          const shouldDelayStep8LuckmailResend = delayedStep8RetryableCodeFailure
+            && consecutiveStep8RetryableCodeFailures < 3;
 
-          if (shouldRequestLuckmailResendBeforeRetry(err) && !shouldDelayStep8LuckmailResend) {
+          if (shouldRequestResend && !shouldDelayStep8LuckmailResend) {
             try {
               await requestVerificationCodeResend(step, pollOverrides);
-              consecutiveStep8EmptyCodeResults = 0;
+              consecutiveStep8RetryableCodeFailures = 0;
             } catch (resendError) {
               if (isStopError(resendError)) {
                 throw resendError;
