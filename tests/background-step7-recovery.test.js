@@ -1196,6 +1196,73 @@ test('step 8 passes LuckMail poll-only long polling options', async () => {
   assert.equal(capturedOptions.disableTimeBudgetCap, true);
 });
 
+test('step 8 derives LuckMail poll attempts from configured wait seconds', async () => {
+  let capturedOptions = null;
+
+  const executor = api.createStep8Executor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        update: async () => {},
+      },
+    },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    confirmCustomVerificationStepBypass: async () => {},
+    ensureStep8VerificationPageReady: async () => ({ state: 'verification_page', displayedEmail: 'luck.user@example.com' }),
+    ensureLuckmailPurchaseForFlow: async () => ({
+      email_address: 'luck.user@example.com',
+      token: 'tok-step8',
+    }),
+    rerunStep7ForStep8Recovery: async () => {},
+    getOAuthFlowRemainingMs: async () => 8000,
+    getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => Math.min(defaultTimeoutMs, 8000),
+    getMailConfig: () => ({
+      provider: 'luckmail-api',
+      label: 'LuckMail（API 购邮）',
+    }),
+    getState: async () => ({
+      email: 'luck.user@example.com',
+      password: 'secret',
+      luckmailEmailWaitSeconds: 45,
+      currentLuckmailPurchase: {
+        email_address: 'luck.user@example.com',
+        token: 'tok-step8',
+      },
+    }),
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isTabAlive: async () => true,
+    isVerificationMailPollingError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    resolveVerificationStep: async (_step, _state, _mail, options) => {
+      capturedOptions = options;
+    },
+    reuseOrCreateTab: async () => {},
+    setState: async () => {},
+    setStepStatus: async () => {},
+    shouldUseCustomRegistrationEmail: () => false,
+    STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS: 25000,
+    STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS: 8,
+    throwIfStopped: () => {},
+  });
+
+  await executor.executeStep8({
+    email: 'luck.user@example.com',
+    password: 'secret',
+    oauthUrl: 'https://oauth.example/latest',
+    luckmailEmailWaitSeconds: 45,
+    currentLuckmailPurchase: {
+      email_address: 'luck.user@example.com',
+      token: 'tok-step8',
+    },
+  });
+
+  assert.equal(capturedOptions.resendIntervalMs, 0);
+  assert.equal(capturedOptions.maxAttempts, 3);
+  assert.equal(capturedOptions.intervalMs, 15000);
+  assert.equal(capturedOptions.disableTimeBudgetCap, true);
+});
+
 test('step 8 does not rerun step 7 when verification submit lands on add-phone', async () => {
   const calls = {
     rerunStep7: 0,

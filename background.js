@@ -339,6 +339,9 @@ const DEFAULT_PHONE_VERIFICATION_REPLACEMENT_LIMIT = 3;
 const PHONE_CODE_WAIT_SECONDS_MIN = 15;
 const PHONE_CODE_WAIT_SECONDS_MAX = 300;
 const DEFAULT_PHONE_CODE_WAIT_SECONDS = 60;
+const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
+const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
+const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;
 const PHONE_CODE_TIMEOUT_WINDOWS_MIN = 1;
 const PHONE_CODE_TIMEOUT_WINDOWS_MAX = 10;
 const DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2;
@@ -724,6 +727,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   luckmailBaseUrl: DEFAULT_LUCKMAIL_BASE_URL,
   luckmailEmailType: DEFAULT_LUCKMAIL_EMAIL_TYPE,
   luckmailDomain: '',
+  luckmailEmailWaitSeconds: DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS,
   luckmailUsedPurchases: {},
   luckmailPreserveTagId: 0,
   luckmailPreserveTagName: DEFAULT_LUCKMAIL_PRESERVE_TAG_NAME,
@@ -1036,6 +1040,21 @@ function normalizePhoneCodeWaitSeconds(value, fallback = DEFAULT_PHONE_CODE_WAIT
   return Math.min(
     PHONE_CODE_WAIT_SECONDS_MAX,
     Math.max(PHONE_CODE_WAIT_SECONDS_MIN, Math.floor(numeric))
+  );
+}
+
+function normalizeLuckmailEmailWaitSeconds(value, fallback = DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS) {
+  const rawValue = String(value ?? '').trim();
+  const numeric = Number(rawValue);
+  if (!rawValue || !Number.isFinite(numeric)) {
+    return Math.min(
+      LUCKMAIL_EMAIL_WAIT_SECONDS_MAX,
+      Math.max(LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.floor(Number(fallback) || DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS))
+    );
+  }
+  return Math.min(
+    LUCKMAIL_EMAIL_WAIT_SECONDS_MAX,
+    Math.max(LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.floor(numeric))
   );
 }
 
@@ -2521,6 +2540,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeLuckmailEmailType(value);
     case 'luckmailDomain':
       return String(value || '').trim();
+    case 'luckmailEmailWaitSeconds':
+      return normalizeLuckmailEmailWaitSeconds(value, DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS);
     case 'luckmailUsedPurchases':
       return normalizeLuckmailUsedPurchases(value);
     case 'luckmailPreserveTagId':
@@ -3292,6 +3313,7 @@ async function resetState() {
       'luckmailBaseUrl',
       'luckmailEmailType',
       'luckmailDomain',
+      'luckmailEmailWaitSeconds',
       'luckmailUsedPurchases',
       'luckmailPreserveTagId',
       'luckmailPreserveTagName',
@@ -3354,6 +3376,7 @@ async function resetState() {
     luckmailBaseUrl: normalizeLuckmailBaseUrl(prev.luckmailBaseUrl),
     luckmailEmailType: normalizeLuckmailEmailType(prev.luckmailEmailType),
     luckmailDomain: String(prev.luckmailDomain || '').trim(),
+    luckmailEmailWaitSeconds: normalizeLuckmailEmailWaitSeconds(prev.luckmailEmailWaitSeconds),
     luckmailUsedPurchases: normalizeLuckmailUsedPurchases(prev.luckmailUsedPurchases),
     luckmailPreserveTagId: Number(prev.luckmailPreserveTagId) || 0,
     luckmailPreserveTagName: String(prev.luckmailPreserveTagName || '').trim() || DEFAULT_LUCKMAIL_PRESERVE_TAG_NAME,
@@ -5001,6 +5024,47 @@ async function setLuckmailPurchaseDisabledState(purchaseId, disabled) {
     projectCode: DEFAULT_LUCKMAIL_PROJECT_CODE,
   });
   return buildLuckmailPurchaseView(refreshedPurchase, await getState());
+}
+
+async function retireCurrentLuckmailPurchaseForStep8Exhaustion(options = {}) {
+  const state = await getState();
+  const purchase = getCurrentLuckmailPurchase(state);
+  const visibleStep = Math.floor(Number(options.step) || 8);
+  const clearEmail = isLuckmailProvider(state);
+  const cleanupUpdates = {
+    step8VerificationTargetEmail: '',
+    loginVerificationRequestedAt: null,
+  };
+
+  if (!purchase?.id) {
+    await clearLuckmailRuntimeState({ clearEmail });
+    await setState(cleanupUpdates);
+    await addLog(
+      `步骤 ${visibleStep}：LuckMail 登录验证码等待超时，但当前没有可禁用的邮箱记录，已清理运行态并准备重新获取邮箱。`,
+      'warn'
+    );
+    return {
+      disabledPurchaseId: 0,
+      email: '',
+    };
+  }
+
+  const purchaseId = Number(purchase.id);
+  const purchaseEmail = String(purchase.email_address || purchase.email || '').trim();
+  const client = createLuckmailClient(state);
+  await client.user.setPurchaseDisabled(purchaseId, 1);
+  await setLuckmailPurchaseUsedState(purchaseId, true);
+  await clearLuckmailRuntimeState({ clearEmail });
+  await setState(cleanupUpdates);
+  await addLog(
+    `步骤 ${visibleStep}：LuckMail 邮箱 ${purchaseEmail || purchaseId} 在登录验证码等待超时后已禁用，下一轮将重新获取邮箱。`,
+    'warn'
+  );
+
+  return {
+    disabledPurchaseId: purchaseId,
+    email: purchaseEmail,
+  };
 }
 
 async function batchUpdateLuckmailPurchases(input = {}) {
@@ -11258,6 +11322,7 @@ const step8Executor = self.MultiPageBackgroundStep8?.createStep8Executor({
   completeStepFromBackground,
   confirmCustomVerificationStepBypass: verificationFlowHelpers.confirmCustomVerificationStepBypass,
   ensureLuckmailPurchaseForFlow,
+  retireCurrentLuckmailPurchaseForStep8Exhaustion,
   ensureMail2925MailboxSession,
   ensureIcloudMailSession: ensureIcloudMailSessionForVerification,
   ensureStep8VerificationPageReady,

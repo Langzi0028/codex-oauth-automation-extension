@@ -223,6 +223,119 @@ test('step 8 reruns step 7 when auth page enters login timeout retry state', asy
   ]);
 });
 
+test('step 8 retires exhausted LuckMail mailbox before rerunning step 7', async () => {
+  let currentState = {
+    email: 'old.luck@example.com',
+    password: 'secret',
+    oauthUrl: 'https://oauth.example/latest',
+    mailProvider: 'luckmail-api',
+    currentLuckmailPurchase: {
+      id: 88,
+      email_address: 'old.luck@example.com',
+      token: 'tok-old',
+    },
+  };
+  const calls = {
+    ensureReady: 0,
+    ensureLuckmailPurchase: 0,
+    resolveCalls: 0,
+    rerunStep7: 0,
+    retire: 0,
+    events: [],
+  };
+
+  const executor = step8Api.createStep8Executor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        update: async () => {},
+      },
+    },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    confirmCustomVerificationStepBypass: async () => {},
+    ensureStep8VerificationPageReady: async () => {
+      calls.ensureReady += 1;
+      return {
+        state: 'verification_page',
+        displayedEmail: currentState.currentLuckmailPurchase?.email_address || 'new.luck@example.com',
+      };
+    },
+    ensureLuckmailPurchaseForFlow: async (options) => {
+      calls.ensureLuckmailPurchase += 1;
+      calls.events.push(['ensureLuckmailPurchase', options]);
+      currentState = {
+        ...currentState,
+        email: 'new.luck@example.com',
+        currentLuckmailPurchase: {
+          id: 99,
+          email_address: 'new.luck@example.com',
+          token: 'tok-new',
+        },
+      };
+      return currentState.currentLuckmailPurchase;
+    },
+    retireCurrentLuckmailPurchaseForStep8Exhaustion: async (options) => {
+      calls.retire += 1;
+      calls.events.push(['retire', options]);
+      currentState = {
+        ...currentState,
+        email: null,
+        currentLuckmailPurchase: null,
+        currentLuckmailMailCursor: null,
+        step8VerificationTargetEmail: '',
+        loginVerificationRequestedAt: null,
+      };
+    },
+    rerunStep7ForStep8Recovery: async (options) => {
+      calls.rerunStep7 += 1;
+      calls.events.push(['rerunStep7', options]);
+    },
+    getOAuthFlowRemainingMs: async () => 8000,
+    getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => Math.min(defaultTimeoutMs, 8000),
+    getMailConfig: () => ({
+      provider: 'luckmail-api',
+      label: 'LuckMail（API 购邮）',
+    }),
+    getState: async () => currentState,
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isTabAlive: async () => true,
+    isVerificationMailPollingError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    resolveVerificationStep: async (_step, state) => {
+      calls.resolveCalls += 1;
+      calls.events.push(['resolve', state.email]);
+      if (calls.resolveCalls === 1) {
+        throw new Error('STEP8_RESTART_STEP7::步骤 8：LuckMail /code 在 20 次轮询后仍未返回新的登录验证码。最后一次原因：no code');
+      }
+    },
+    reuseOrCreateTab: async () => {},
+    setState: async (updates) => {
+      currentState = { ...currentState, ...(updates || {}) };
+    },
+    shouldUseCustomRegistrationEmail: () => false,
+    sleepWithStop: async () => {},
+    STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS: 25000,
+    STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS: 3,
+    throwIfStopped: () => {},
+  });
+
+  await executor.executeStep8({ ...currentState });
+
+  assert.equal(calls.retire, 1);
+  assert.equal(calls.rerunStep7, 1);
+  assert.equal(calls.ensureLuckmailPurchase, 1);
+  assert.equal(calls.resolveCalls, 2);
+  assert.deepStrictEqual(calls.events.map((event) => event[0]), [
+    'resolve',
+    'retire',
+    'rerunStep7',
+    'ensureLuckmailPurchase',
+    'resolve',
+  ]);
+  assert.equal(calls.events.at(-1)[1], 'new.luck@example.com');
+});
+
 test('step 8 escalates to rerun step 7 after too many local retry_without_step7 recoveries', async () => {
   const calls = {
     rerunStep7: 0,

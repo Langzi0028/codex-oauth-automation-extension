@@ -482,6 +482,7 @@ return {
 
 test('buildPersistentSettingsPayload keeps LuckMail config fields for storage.local persistence', () => {
   const bundle = [
+    extractFunction('normalizeLuckmailEmailWaitSeconds'),
     extractFunction('normalizePersistentSettingValue'),
     extractFunction('buildPersistentSettingsPayload'),
   ].join('\n');
@@ -489,11 +490,15 @@ test('buildPersistentSettingsPayload keeps LuckMail config fields for storage.lo
   const factory = new Function(`
 const DEFAULT_LUCKMAIL_BASE_URL = 'https://mails.luckyous.com';
 const DEFAULT_LUCKMAIL_EMAIL_TYPE = 'ms_graph';
+const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
+const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
+const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;
 const PERSISTED_SETTING_DEFAULTS = {
   luckmailApiKey: '',
   luckmailBaseUrl: DEFAULT_LUCKMAIL_BASE_URL,
   luckmailEmailType: DEFAULT_LUCKMAIL_EMAIL_TYPE,
   luckmailDomain: '',
+  luckmailEmailWaitSeconds: DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS,
   luckmailUsedPurchases: {},
   luckmailPreserveTagId: 0,
   luckmailPreserveTagName: '保留',
@@ -537,6 +542,7 @@ return {
     luckmailBaseUrl: 'https://demo.example.com/',
     luckmailEmailType: 'ms_imap',
     luckmailDomain: ' outlook.com ',
+    luckmailEmailWaitSeconds: '45',
   });
 
   assert.deepStrictEqual(payload, {
@@ -544,6 +550,13 @@ return {
     luckmailBaseUrl: 'https://demo.example.com',
     luckmailEmailType: 'ms_imap',
     luckmailDomain: 'outlook.com',
+    luckmailEmailWaitSeconds: 45,
+  });
+
+  assert.deepStrictEqual(api.buildPersistentSettingsPayload({
+    luckmailEmailWaitSeconds: '9999',
+  }), {
+    luckmailEmailWaitSeconds: 1800,
   });
 
   const statePayload = api.buildPersistentSettingsPayload({
@@ -672,6 +685,97 @@ return {
   assert.deepStrictEqual(snapshot.clearedOptions, { clearEmail: true });
 });
 
+test('retireCurrentLuckmailPurchaseForStep8Exhaustion disables current mailbox and clears runtime state', async () => {
+  const bundle = extractFunction('retireCurrentLuckmailPurchaseForStep8Exhaustion');
+
+  const factory = new Function(`
+let currentState = {
+  mailProvider: 'luckmail-api',
+  email: 'dead@outlook.com',
+  currentLuckmailPurchase: {
+    id: 88,
+    email_address: 'dead@outlook.com',
+    token: 'tok-secret',
+  },
+  currentLuckmailMailCursor: { messageId: 'old' },
+  step8VerificationTargetEmail: 'dead@outlook.com',
+  loginVerificationRequestedAt: 123,
+};
+const disabledCalls = [];
+const usedCalls = [];
+const clearedCalls = [];
+const stateUpdates = [];
+const logs = [];
+
+async function getState() {
+  return currentState;
+}
+function getCurrentLuckmailPurchase(state) {
+  return state.currentLuckmailPurchase;
+}
+function createLuckmailClient() {
+  return {
+    user: {
+      async setPurchaseDisabled(id, disabled) {
+        disabledCalls.push({ id, disabled });
+      },
+    },
+  };
+}
+async function setLuckmailPurchaseUsedState(purchaseId, used) {
+  usedCalls.push({ purchaseId, used });
+}
+async function clearLuckmailRuntimeState(options) {
+  clearedCalls.push(options);
+  currentState = {
+    ...currentState,
+    currentLuckmailPurchase: null,
+    currentLuckmailMailCursor: null,
+    email: options?.clearEmail ? null : currentState.email,
+  };
+}
+async function setState(updates) {
+  stateUpdates.push(updates);
+  currentState = { ...currentState, ...(updates || {}) };
+}
+function isLuckmailProvider(state) {
+  return state.mailProvider === 'luckmail-api';
+}
+async function addLog(message, level) {
+  logs.push({ message, level });
+}
+
+${bundle}
+
+return {
+  retireCurrentLuckmailPurchaseForStep8Exhaustion,
+  snapshot() {
+    return { currentState, disabledCalls, usedCalls, clearedCalls, stateUpdates, logs };
+  },
+};
+`);
+
+  const api = factory();
+  const result = await api.retireCurrentLuckmailPurchaseForStep8Exhaustion({
+    step: 8,
+    reason: 'step8_luckmail_code_exhausted',
+  });
+  const snapshot = api.snapshot();
+
+  assert.deepStrictEqual(snapshot.disabledCalls, [{ id: 88, disabled: 1 }]);
+  assert.deepStrictEqual(snapshot.usedCalls, [{ purchaseId: 88, used: true }]);
+  assert.deepStrictEqual(snapshot.clearedCalls, [{ clearEmail: true }]);
+  assert.deepStrictEqual(snapshot.stateUpdates.at(-1), {
+    step8VerificationTargetEmail: '',
+    loginVerificationRequestedAt: null,
+  });
+  assert.equal(snapshot.currentState.email, null);
+  assert.equal(snapshot.currentState.currentLuckmailPurchase, null);
+  assert.equal(result.disabledPurchaseId, 88);
+  assert.equal(result.email, 'dead@outlook.com');
+  assert.equal(snapshot.logs.some(({ message }) => /dead@outlook\.com/.test(message)), true);
+});
+
 test('resetState preserves LuckMail session config, used map, and preserve tag cache while clearing runtime purchase state', async () => {
   const bundle = [
     extractFunction('buildContributionModeState'),
@@ -683,11 +787,15 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
     'let storedPayload = null;',
     "const LOG_PREFIX = '[test]';",
     "const DEFAULT_LUCKMAIL_PRESERVE_TAG_NAME = '保留';",
+    'const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;',
+    'const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;',
+    'const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;',
     'const DEFAULT_STATE = {',
     "  luckmailApiKey: '',",
     "  luckmailBaseUrl: 'https://mails.luckyous.com',",
     "  luckmailEmailType: 'ms_graph',",
     "  luckmailDomain: '',",
+    '  luckmailEmailWaitSeconds: DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS,',
     "  panelMode: 'cpa',",
     '  luckmailUsedPurchases: {},',
     '  luckmailPreserveTagId: 0,',
@@ -725,6 +833,14 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
     'function normalizeLuckmailUsedPurchases(value) {',
     '  return value || {};',
     '}',
+    'function normalizeLuckmailEmailWaitSeconds(value, fallback = DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS) {',
+    '  const rawValue = String(value ?? \'\').trim();',
+    '  const numeric = Number(rawValue);',
+    '  if (!rawValue || !Number.isFinite(numeric)) {',
+    '    return Math.min(LUCKMAIL_EMAIL_WAIT_SECONDS_MAX, Math.max(LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.floor(Number(fallback) || DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS)));',
+    '  }',
+    '  return Math.min(LUCKMAIL_EMAIL_WAIT_SECONDS_MAX, Math.max(LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.floor(numeric)));',
+    '}',
     'async function getPersistedSettings() {',
     "  return { mailProvider: '163' };",
     '}',
@@ -746,6 +862,7 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
     "          luckmailBaseUrl: 'https://demo.example.com/',",
     "          luckmailEmailType: 'ms_imap',",
     "          luckmailDomain: 'outlook.com',",
+    "          luckmailEmailWaitSeconds: '45',",
     "          luckmailUsedPurchases: { 88: true },",
     '          luckmailPreserveTagId: 9,',
     "          luckmailPreserveTagName: '保留',",
@@ -778,6 +895,7 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
   assert.equal(snapshot.storedPayload.luckmailBaseUrl, 'https://demo.example.com');
   assert.equal(snapshot.storedPayload.luckmailEmailType, 'ms_imap');
   assert.equal(snapshot.storedPayload.luckmailDomain, 'outlook.com');
+  assert.equal(snapshot.storedPayload.luckmailEmailWaitSeconds, 45);
   assert.deepStrictEqual(snapshot.storedPayload.luckmailUsedPurchases, { 88: true });
   assert.equal(snapshot.storedPayload.luckmailPreserveTagId, 9);
   assert.equal(snapshot.storedPayload.luckmailPreserveTagName, '保留');

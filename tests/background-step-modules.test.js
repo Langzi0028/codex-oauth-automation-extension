@@ -27,6 +27,7 @@ test('background wires LuckMail purchase helper into step 8 executor', () => {
 
   assert.ok(match, 'missing step 8 executor wiring block');
   assert.match(match[1], /\bensureLuckmailPurchaseForFlow,/);
+  assert.match(match[1], /\bretireCurrentLuckmailPurchaseForStep8Exhaustion,/);
 });
 
 test('background forwards signup email resolution options', () => {

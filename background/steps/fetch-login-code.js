@@ -4,8 +4,10 @@
   const MAIL_2925_FILTER_LOOKBACK_MS = 10 * 60 * 1000;
   const STEP8_ADD_EMAIL_URL = 'https://auth.openai.com/add-email';
   const STEP8_CURRENT_STEP_RECOVERY_MAX_ATTEMPTS = 3;
-  const STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS = 20;
   const STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS = 15000;
+  const STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
+  const STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
+  const STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_DEFAULT = 300;
 
   function createStep8Executor(deps = {}) {
     const {
@@ -19,6 +21,7 @@
       ensureMail2925MailboxSession,
       ensureIcloudMailSession,
       ensureStep8VerificationPageReady,
+      retireCurrentLuckmailPurchaseForStep8Exhaustion,
       getOAuthFlowRemainingMs,
       getOAuthFlowStepTimeoutMs,
       getMailConfig,
@@ -104,6 +107,30 @@
 
     function normalizeStep8VerificationTargetEmail(value) {
       return String(value || '').trim().toLowerCase();
+    }
+
+    function normalizeStep8LuckmailEmailWaitSeconds(value) {
+      const rawValue = String(value ?? '').trim();
+      const numeric = Number(rawValue);
+      if (!rawValue || !Number.isFinite(numeric)) {
+        return STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_DEFAULT;
+      }
+      return Math.min(
+        STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_MAX,
+        Math.max(STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.floor(numeric))
+      );
+    }
+
+    function getStep8LuckmailCodePollMaxAttempts(state = {}) {
+      const waitSeconds = normalizeStep8LuckmailEmailWaitSeconds(state?.luckmailEmailWaitSeconds);
+      return Math.max(1, Math.ceil((waitSeconds * 1000) / STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS));
+    }
+
+    function isStep8LuckmailCodePollingExhaustedError(error) {
+      const message = String(error?.message || error || '');
+      return /STEP8_RESTART_STEP7::/i.test(message)
+        && /LuckMail\s*\/code/i.test(message)
+        && /仍未返回新的/.test(message);
     }
 
     function getLuckmailPurchaseFromState(state = {}) {
@@ -618,7 +645,7 @@
             : STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS),
         ...(mail.provider === LUCKMAIL_PROVIDER
           ? {
-            maxAttempts: STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS,
+            maxAttempts: getStep8LuckmailCodePollMaxAttempts(preparedState),
             intervalMs: STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS,
           }
           : {}),
@@ -754,14 +781,25 @@
             continue;
           }
           retryWithoutStep7Streak = 0;
+          const shouldRetireLuckmailPurchase = isStep8LuckmailCodePollingExhaustedError(currentError);
+          if (shouldRetireLuckmailPurchase && typeof retireCurrentLuckmailPurchaseForStep8Exhaustion === 'function') {
+            await retireCurrentLuckmailPurchaseForStep8Exhaustion({
+              step: visibleStep,
+              reason: 'step8_luckmail_code_exhausted',
+            });
+          }
           await addLog(
-            isStep8RestartStep7Error(currentError)
+            shouldRetireLuckmailPurchase
+              ? `步骤 ${visibleStep}：LuckMail 邮箱验证码等待超时，已禁用当前邮箱，准备从步骤 ${authLoginStep} 重新获取新邮箱（${mailPollingAttempt}/${STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS}）...`
+              : isStep8RestartStep7Error(currentError)
               ? `步骤 ${visibleStep}：检测到认证页进入重试/超时报错状态，准备从步骤 ${authLoginStep} 重新开始（${mailPollingAttempt}/${STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS}）...`
               : `步骤 ${visibleStep}：检测到邮箱轮询类失败，准备从步骤 ${authLoginStep} 重新开始（${mailPollingAttempt}/${STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS}）...`,
             'warn'
           );
           await rerunStep7ForStep8Recovery({
-            logMessage: isStep8RestartStep7Error(currentError)
+            logMessage: shouldRetireLuckmailPurchase
+              ? `LuckMail 邮箱验证码等待超时，正在回到步骤 ${authLoginStep} 重新获取新邮箱...`
+              : isStep8RestartStep7Error(currentError)
               ? `认证页进入重试/超时报错状态，正在回到步骤 ${authLoginStep} 重新发起登录流程...`
               : `正在回到步骤 ${authLoginStep}，重新发起登录验证码流程...`,
             logStep: visibleStep,

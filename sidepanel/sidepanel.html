@@ -951,6 +951,16 @@
         <input type="text" id="input-luckmail-domain" class="data-input mono" placeholder="可选，留空则由 LuckMail 默认处理" />
       </div>
       <div class="data-row">
+        <span class="data-label">等码时长</span>
+        <div class="data-inline">
+          <div class="setting-controls">
+            <input type="number" id="input-luckmail-email-wait-seconds" class="data-input auto-delay-input" value="300"
+              min="15" max="1800" step="15" title="Step8 LuckMail /code 最大等码时长，300 秒约 5 分钟" />
+            <span class="data-unit">秒</span>
+          </div>
+        </div>
+      </div>
+      <div class="data-row">
         <span class="data-label">项目</span>
         <span class="data-value mono">openai</span>
       </div>

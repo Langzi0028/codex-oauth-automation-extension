@@ -343,6 +343,7 @@ const inputLuckmailApiKey = document.getElementById('input-luckmail-api-key');
 const inputLuckmailBaseUrl = document.getElementById('input-luckmail-base-url');
 const selectLuckmailEmailType = document.getElementById('select-luckmail-email-type');
 const inputLuckmailDomain = document.getElementById('input-luckmail-domain');
+const inputLuckmailEmailWaitSeconds = document.getElementById('input-luckmail-email-wait-seconds');
 const btnLuckmailRefresh = document.getElementById('btn-luckmail-refresh');
 const btnLuckmailDisableUsed = document.getElementById('btn-luckmail-disable-used');
 const luckmailSummary = document.getElementById('luckmail-summary');
@@ -850,6 +851,9 @@ const LUCKMAIL_PROVIDER = 'luckmail-api';
 const CUSTOM_EMAIL_POOL_GENERATOR = 'custom-pool';
 const DEFAULT_LUCKMAIL_BASE_URL = 'https://mails.luckyous.com';
 const DEFAULT_LUCKMAIL_EMAIL_TYPE = 'ms_graph';
+const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
+const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
+const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;
 const DISPLAY_TIMEZONE = 'Asia/Shanghai';
 const DEFAULT_ACCOUNT_RUN_HISTORY_HELPER_BASE_URL = 'http://127.0.0.1:17373';
 const CONTRIBUTION_UPLOAD_URL = 'https://apikey.qzz.io/';
@@ -3208,6 +3212,9 @@ function collectSettingsPayload() {
   const defaultPhoneCodePollMaxRounds = typeof DEFAULT_PHONE_CODE_POLL_MAX_ROUNDS !== 'undefined'
     ? DEFAULT_PHONE_CODE_POLL_MAX_ROUNDS
     : 12;
+  const defaultLuckmailEmailWaitSeconds = typeof DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS !== 'undefined'
+    ? DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS
+    : 300;
   const heroSmsReuseEnabledValue = typeof inputHeroSmsReuseEnabled !== 'undefined' && inputHeroSmsReuseEnabled
     ? normalizeHeroSmsReuseEnabledValue(inputHeroSmsReuseEnabled.checked)
     : defaultHeroSmsReuseEnabled;
@@ -3315,6 +3322,12 @@ function collectSettingsPayload() {
       latestState?.phoneCodePollMaxRounds
     )
     : defaultPhoneCodePollMaxRounds;
+  const luckmailEmailWaitSecondsValue = typeof inputLuckmailEmailWaitSeconds !== 'undefined' && inputLuckmailEmailWaitSeconds
+    ? normalizeLuckmailEmailWaitSecondsValue(
+      inputLuckmailEmailWaitSeconds.value,
+      latestState?.luckmailEmailWaitSeconds
+    )
+    : defaultLuckmailEmailWaitSeconds;
   const selectedPhoneSmsCountry = phoneSmsProviderValue === PHONE_SMS_PROVIDER_FIVE_SIM
     ? ((typeof getSelectedFiveSimCountries === 'function' ? getSelectedFiveSimCountries()[0] : null)
       || { id: DEFAULT_FIVE_SIM_COUNTRY_ID, code: DEFAULT_FIVE_SIM_COUNTRY_ID, label: DEFAULT_FIVE_SIM_COUNTRY_LABEL })
@@ -3569,6 +3582,7 @@ function collectSettingsPayload() {
     luckmailBaseUrl: normalizeLuckmailBaseUrl(inputLuckmailBaseUrl.value),
     luckmailEmailType: normalizeLuckmailEmailType(selectLuckmailEmailType.value),
     luckmailDomain: inputLuckmailDomain.value.trim(),
+    luckmailEmailWaitSeconds: luckmailEmailWaitSecondsValue,
     cloudflareDomain: selectedCloudflareDomain,
     cloudflareDomains: domains,
     cloudflareTempEmailBaseUrl: normalizeCloudflareTempEmailBaseUrlValue(inputTempEmailBaseUrl.value),
@@ -8519,6 +8533,11 @@ function applySettingsState(state) {
   inputLuckmailBaseUrl.value = normalizeLuckmailBaseUrl(state?.luckmailBaseUrl);
   selectLuckmailEmailType.value = normalizeLuckmailEmailType(state?.luckmailEmailType);
   inputLuckmailDomain.value = state?.luckmailDomain || '';
+  if (typeof inputLuckmailEmailWaitSeconds !== 'undefined' && inputLuckmailEmailWaitSeconds) {
+    inputLuckmailEmailWaitSeconds.value = String(
+      normalizeLuckmailEmailWaitSecondsValue(state?.luckmailEmailWaitSeconds, DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS)
+    );
+  }
   applyCloudflareTempEmailSettingsState(state);
   if (typeof applyCloudMailSettingsState === 'function') {
     applyCloudMailSettingsState(state);
@@ -9254,6 +9273,18 @@ function normalizeLuckmailEmailType(value = '') {
   return ['self_built', 'ms_imap', 'ms_graph', 'google_variant'].includes(normalized)
     ? normalized
     : DEFAULT_LUCKMAIL_EMAIL_TYPE;
+}
+
+function normalizeLuckmailEmailWaitSecondsValue(value, fallback = DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS) {
+  const rawValue = String(value ?? '').trim();
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(
+      LUCKMAIL_EMAIL_WAIT_SECONDS_MIN,
+      Math.min(LUCKMAIL_EMAIL_WAIT_SECONDS_MAX, Number(fallback) || DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS)
+    );
+  }
+  return Math.max(LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.min(LUCKMAIL_EMAIL_WAIT_SECONDS_MAX, parsed));
 }
 
 function getSelectedEmailGenerator() {
@@ -11696,6 +11727,19 @@ inputVpsPassword.addEventListener('blur', () => {
   });
 });
 
+if (typeof inputLuckmailEmailWaitSeconds !== 'undefined' && inputLuckmailEmailWaitSeconds) {
+  inputLuckmailEmailWaitSeconds.addEventListener('input', () => {
+    markSettingsDirty(true);
+    scheduleSettingsAutoSave();
+  });
+  inputLuckmailEmailWaitSeconds.addEventListener('blur', () => {
+    inputLuckmailEmailWaitSeconds.value = String(
+      normalizeLuckmailEmailWaitSecondsValue(inputLuckmailEmailWaitSeconds.value, DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS)
+    );
+    saveSettings({ silent: true }).catch(() => { });
+  });
+}
+
 selectLuckmailEmailType?.addEventListener('change', () => {
   markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => { });
@@ -13811,6 +13855,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (message.payload.luckmailDomain !== undefined) {
         inputLuckmailDomain.value = message.payload.luckmailDomain || '';
+      }
+      if (
+        message.payload.luckmailEmailWaitSeconds !== undefined
+        && typeof inputLuckmailEmailWaitSeconds !== 'undefined'
+        && inputLuckmailEmailWaitSeconds
+      ) {
+        inputLuckmailEmailWaitSeconds.value = String(
+          normalizeLuckmailEmailWaitSecondsValue(message.payload.luckmailEmailWaitSeconds, DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS)
+        );
       }
       if (message.payload.luckmailUsedPurchases !== undefined && isLuckmailProvider()) {
         queueLuckmailPurchaseRefresh();

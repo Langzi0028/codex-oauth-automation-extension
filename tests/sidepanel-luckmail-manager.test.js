@@ -2,6 +2,52 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
+const sidepanelSource = fs.readFileSync('sidepanel/sidepanel.js', 'utf8');
+
+function extractFunction(name) {
+  const markers = [`async function ${name}(`, `function ${name}(`];
+  const start = markers
+    .map((marker) => sidepanelSource.indexOf(marker))
+    .find((index) => index >= 0);
+  if (start < 0) {
+    throw new Error(`missing function ${name}`);
+  }
+
+  let parenDepth = 0;
+  let signatureEnded = false;
+  let braceStart = -1;
+  for (let i = start; i < sidepanelSource.length; i += 1) {
+    const ch = sidepanelSource[i];
+    if (ch === '(') {
+      parenDepth += 1;
+    } else if (ch === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) {
+        signatureEnded = true;
+      }
+    } else if (ch === '{' && signatureEnded) {
+      braceStart = i;
+      break;
+    }
+  }
+
+  let depth = 0;
+  let end = braceStart;
+  for (; end < sidepanelSource.length; end += 1) {
+    const ch = sidepanelSource[end];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end += 1;
+        break;
+      }
+    }
+  }
+
+  return sidepanelSource.slice(start, end);
+}
+
 test('sidepanel loads luckmail manager before sidepanel bootstrap', () => {
   const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
   const luckmailManagerIndex = html.indexOf('<script src="luckmail-manager.js"></script>');
@@ -10,6 +56,51 @@ test('sidepanel loads luckmail manager before sidepanel bootstrap', () => {
   assert.notEqual(luckmailManagerIndex, -1);
   assert.notEqual(sidepanelIndex, -1);
   assert.ok(luckmailManagerIndex < sidepanelIndex);
+});
+
+test('sidepanel html exposes compact LuckMail Step8 email wait seconds setting', () => {
+  const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
+  const domainIndex = html.indexOf('id="input-luckmail-domain"');
+  const waitInputIndex = html.indexOf('id="input-luckmail-email-wait-seconds"');
+  const projectIndex = html.indexOf('<span class="data-label">项目</span>');
+
+  assert.notEqual(waitInputIndex, -1);
+  assert.ok(waitInputIndex > domainIndex, 'wait setting should sit after the LuckMail domain setting');
+  assert.ok(waitInputIndex < projectIndex, 'wait setting should stay with compact LuckMail settings before project display');
+  assert.match(html, /<span class="data-label">等码时长<\/span>/);
+  assert.match(html, /id="input-luckmail-email-wait-seconds"[^>]*value="300"[^>]*min="15"[^>]*max="1800"[^>]*step="15"/s);
+  assert.match(html, /id="input-luckmail-email-wait-seconds"[^>]*title="Step8 LuckMail \/code 最大等码时长，300 秒约 5 分钟"/s);
+  assert.match(html, /id="input-luckmail-email-wait-seconds"[\s\S]*<span class="data-unit">秒<\/span>/);
+});
+
+test('sidepanel source normalizes LuckMail email wait seconds to bounded seconds', () => {
+  const api = new Function(`
+const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
+const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
+const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;
+${extractFunction('normalizeLuckmailEmailWaitSecondsValue')}
+return { normalizeLuckmailEmailWaitSecondsValue };
+`)();
+
+  assert.equal(api.normalizeLuckmailEmailWaitSecondsValue(undefined), 300);
+  assert.equal(api.normalizeLuckmailEmailWaitSecondsValue('', 900), 900);
+  assert.equal(api.normalizeLuckmailEmailWaitSecondsValue('14'), 15);
+  assert.equal(api.normalizeLuckmailEmailWaitSecondsValue('15'), 15);
+  assert.equal(api.normalizeLuckmailEmailWaitSecondsValue('675.9'), 675);
+  assert.equal(api.normalizeLuckmailEmailWaitSecondsValue('1801'), 1800);
+});
+
+test('sidepanel source persists restores and live-updates LuckMail email wait seconds', () => {
+  assert.match(sidepanelSource, /const inputLuckmailEmailWaitSeconds = document\.getElementById\('input-luckmail-email-wait-seconds'\);/);
+  assert.match(sidepanelSource, /const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;/);
+  assert.match(sidepanelSource, /const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;/);
+  assert.match(sidepanelSource, /const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;/);
+  assert.match(sidepanelSource, /const luckmailEmailWaitSecondsValue =[\s\S]*normalizeLuckmailEmailWaitSecondsValue\([\s\S]*inputLuckmailEmailWaitSeconds/);
+  assert.match(sidepanelSource, /luckmailEmailWaitSeconds: luckmailEmailWaitSecondsValue,/);
+  assert.match(sidepanelSource, /inputLuckmailEmailWaitSeconds\.value = String\([\s\S]*normalizeLuckmailEmailWaitSecondsValue\(state\?\.luckmailEmailWaitSeconds/);
+  assert.match(sidepanelSource, /message\.payload\.luckmailEmailWaitSeconds !== undefined[\s\S]*inputLuckmailEmailWaitSeconds\.value = String\(/);
+  assert.match(sidepanelSource, /typeof inputLuckmailEmailWaitSeconds !== 'undefined'[\s\S]*inputLuckmailEmailWaitSeconds\.addEventListener\('input'[\s\S]*markSettingsDirty\(true\);[\s\S]*scheduleSettingsAutoSave\(\);/);
+  assert.match(sidepanelSource, /typeof inputLuckmailEmailWaitSeconds !== 'undefined'[\s\S]*inputLuckmailEmailWaitSeconds\.addEventListener\('blur'[\s\S]*normalizeLuckmailEmailWaitSecondsValue\(inputLuckmailEmailWaitSeconds\.value/);
 });
 
 test('luckmail manager exposes a factory and renders empty state', () => {
