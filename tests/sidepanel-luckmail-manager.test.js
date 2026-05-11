@@ -73,6 +73,21 @@ test('sidepanel html exposes compact LuckMail Step8 email wait seconds setting',
   assert.match(html, /id="input-luckmail-email-wait-seconds"[\s\S]*<span class="data-unit">秒<\/span>/);
 });
 
+test('sidepanel html exposes compact LuckMail actual code polling interval setting', () => {
+  const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
+  const waitInputIndex = html.indexOf('id="input-luckmail-email-wait-seconds"');
+  const intervalInputIndex = html.indexOf('id="input-luckmail-code-poll-interval-seconds"');
+  const projectIndex = html.indexOf('<span class="data-label">项目</span>');
+
+  assert.notEqual(intervalInputIndex, -1);
+  assert.ok(intervalInputIndex > waitInputIndex, 'interval setting should sit after the LuckMail wait setting');
+  assert.ok(intervalInputIndex < projectIndex, 'interval setting should stay with compact LuckMail settings before project display');
+  assert.match(html, /<span class="data-label">轮询间隔<\/span>/);
+  assert.match(html, /id="input-luckmail-code-poll-interval-seconds"[^>]*value="15"[^>]*min="5"[^>]*max="60"[^>]*step="1"/s);
+  assert.match(html, /id="input-luckmail-code-poll-interval-seconds"[^>]*title="Step8 LuckMail \/code 实际轮询间隔，默认 15 秒"/s);
+  assert.match(html, /id="input-luckmail-code-poll-interval-seconds"[\s\S]*<span class="data-unit">秒<\/span>/);
+});
+
 test('sidepanel source normalizes LuckMail email wait seconds to bounded seconds', () => {
   const api = new Function(`
 const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
@@ -90,6 +105,23 @@ return { normalizeLuckmailEmailWaitSecondsValue };
   assert.equal(api.normalizeLuckmailEmailWaitSecondsValue('1801'), 1800);
 });
 
+test('sidepanel source normalizes LuckMail code polling interval seconds to bounded seconds', () => {
+  const api = new Function(`
+const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN = 5;
+const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX = 60;
+const DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS = 15;
+${extractFunction('normalizeLuckmailCodePollIntervalSecondsValue')}
+return { normalizeLuckmailCodePollIntervalSecondsValue };
+`)();
+
+  assert.equal(api.normalizeLuckmailCodePollIntervalSecondsValue(undefined), 15);
+  assert.equal(api.normalizeLuckmailCodePollIntervalSecondsValue('', 30), 30);
+  assert.equal(api.normalizeLuckmailCodePollIntervalSecondsValue('4'), 5);
+  assert.equal(api.normalizeLuckmailCodePollIntervalSecondsValue('5'), 5);
+  assert.equal(api.normalizeLuckmailCodePollIntervalSecondsValue('7.9'), 7);
+  assert.equal(api.normalizeLuckmailCodePollIntervalSecondsValue('61'), 60);
+});
+
 test('sidepanel source persists restores and live-updates LuckMail email wait seconds', () => {
   assert.match(sidepanelSource, /const inputLuckmailEmailWaitSeconds = document\.getElementById\('input-luckmail-email-wait-seconds'\);/);
   assert.match(sidepanelSource, /const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;/);
@@ -101,6 +133,19 @@ test('sidepanel source persists restores and live-updates LuckMail email wait se
   assert.match(sidepanelSource, /message\.payload\.luckmailEmailWaitSeconds !== undefined[\s\S]*inputLuckmailEmailWaitSeconds\.value = String\(/);
   assert.match(sidepanelSource, /typeof inputLuckmailEmailWaitSeconds !== 'undefined'[\s\S]*inputLuckmailEmailWaitSeconds\.addEventListener\('input'[\s\S]*markSettingsDirty\(true\);[\s\S]*scheduleSettingsAutoSave\(\);/);
   assert.match(sidepanelSource, /typeof inputLuckmailEmailWaitSeconds !== 'undefined'[\s\S]*inputLuckmailEmailWaitSeconds\.addEventListener\('blur'[\s\S]*normalizeLuckmailEmailWaitSecondsValue\(inputLuckmailEmailWaitSeconds\.value/);
+});
+
+test('sidepanel source persists restores and live-updates LuckMail code polling interval seconds', () => {
+  assert.match(sidepanelSource, /const inputLuckmailCodePollIntervalSeconds = document\.getElementById\('input-luckmail-code-poll-interval-seconds'\);/);
+  assert.match(sidepanelSource, /const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN = 5;/);
+  assert.match(sidepanelSource, /const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX = 60;/);
+  assert.match(sidepanelSource, /const DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS = 15;/);
+  assert.match(sidepanelSource, /const luckmailCodePollIntervalSecondsValue =[\s\S]*normalizeLuckmailCodePollIntervalSecondsValue\([\s\S]*inputLuckmailCodePollIntervalSeconds/);
+  assert.match(sidepanelSource, /luckmailCodePollIntervalSeconds: luckmailCodePollIntervalSecondsValue,/);
+  assert.match(sidepanelSource, /inputLuckmailCodePollIntervalSeconds\.value = String\([\s\S]*normalizeLuckmailCodePollIntervalSecondsValue\(state\?\.luckmailCodePollIntervalSeconds/);
+  assert.match(sidepanelSource, /message\.payload\.luckmailCodePollIntervalSeconds !== undefined[\s\S]*inputLuckmailCodePollIntervalSeconds\.value = String\(/);
+  assert.match(sidepanelSource, /typeof inputLuckmailCodePollIntervalSeconds !== 'undefined'[\s\S]*inputLuckmailCodePollIntervalSeconds\.addEventListener\('input'[\s\S]*markSettingsDirty\(true\);[\s\S]*scheduleSettingsAutoSave\(\);/);
+  assert.match(sidepanelSource, /typeof inputLuckmailCodePollIntervalSeconds !== 'undefined'[\s\S]*inputLuckmailCodePollIntervalSeconds\.addEventListener\('blur'[\s\S]*normalizeLuckmailCodePollIntervalSecondsValue\(inputLuckmailCodePollIntervalSeconds\.value/);
 });
 
 test('luckmail manager exposes a factory and renders empty state', () => {

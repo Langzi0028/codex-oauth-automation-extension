@@ -342,6 +342,9 @@ const DEFAULT_PHONE_CODE_WAIT_SECONDS = 60;
 const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
 const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
 const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;
+const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN = 5;
+const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX = 60;
+const DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS = 15;
 const PHONE_CODE_TIMEOUT_WINDOWS_MIN = 1;
 const PHONE_CODE_TIMEOUT_WINDOWS_MAX = 10;
 const DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2;
@@ -728,6 +731,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   luckmailEmailType: DEFAULT_LUCKMAIL_EMAIL_TYPE,
   luckmailDomain: '',
   luckmailEmailWaitSeconds: DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS,
+  luckmailCodePollIntervalSeconds: DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS,
   luckmailUsedPurchases: {},
   luckmailPreserveTagId: 0,
   luckmailPreserveTagName: DEFAULT_LUCKMAIL_PRESERVE_TAG_NAME,
@@ -1055,6 +1059,21 @@ function normalizeLuckmailEmailWaitSeconds(value, fallback = DEFAULT_LUCKMAIL_EM
   return Math.min(
     LUCKMAIL_EMAIL_WAIT_SECONDS_MAX,
     Math.max(LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.floor(numeric))
+  );
+}
+
+function normalizeLuckmailCodePollIntervalSeconds(value, fallback = DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS) {
+  const rawValue = String(value ?? '').trim();
+  const numeric = Number(rawValue);
+  if (!rawValue || !Number.isFinite(numeric)) {
+    return Math.min(
+      LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX,
+      Math.max(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN, Math.floor(Number(fallback) || DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS))
+    );
+  }
+  return Math.min(
+    LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX,
+    Math.max(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN, Math.floor(numeric))
   );
 }
 
@@ -2542,6 +2561,8 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '').trim();
     case 'luckmailEmailWaitSeconds':
       return normalizeLuckmailEmailWaitSeconds(value, DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS);
+    case 'luckmailCodePollIntervalSeconds':
+      return normalizeLuckmailCodePollIntervalSeconds(value, DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS);
     case 'luckmailUsedPurchases':
       return normalizeLuckmailUsedPurchases(value);
     case 'luckmailPreserveTagId':
@@ -3314,6 +3335,7 @@ async function resetState() {
       'luckmailEmailType',
       'luckmailDomain',
       'luckmailEmailWaitSeconds',
+      'luckmailCodePollIntervalSeconds',
       'luckmailUsedPurchases',
       'luckmailPreserveTagId',
       'luckmailPreserveTagName',
@@ -3377,6 +3399,7 @@ async function resetState() {
     luckmailEmailType: normalizeLuckmailEmailType(prev.luckmailEmailType),
     luckmailDomain: String(prev.luckmailDomain || '').trim(),
     luckmailEmailWaitSeconds: normalizeLuckmailEmailWaitSeconds(prev.luckmailEmailWaitSeconds),
+    luckmailCodePollIntervalSeconds: normalizeLuckmailCodePollIntervalSeconds(prev.luckmailCodePollIntervalSeconds),
     luckmailUsedPurchases: normalizeLuckmailUsedPurchases(prev.luckmailUsedPurchases),
     luckmailPreserveTagId: Number(prev.luckmailPreserveTagId) || 0,
     luckmailPreserveTagName: String(prev.luckmailPreserveTagName || '').trim() || DEFAULT_LUCKMAIL_PRESERVE_TAG_NAME,

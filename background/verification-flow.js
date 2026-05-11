@@ -106,6 +106,19 @@
       return Math.max(45000, maxAttempts * intervalMs + ICLOUD_MAIL_POLL_TIMEOUT_MARGIN_MS);
     }
 
+    function buildLuckmailPollOverrides(step, state, cleanPollOverrides = {}) {
+      const isStep8LuckmailLoginCode = Number(step) === 8;
+      const defaultPayload = getVerificationPollPayload(step, state);
+      return {
+        ...defaultPayload,
+        maxAttempts: isStep8LuckmailLoginCode
+          ? STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS
+          : Math.max(1, Math.floor(Number(defaultPayload.maxAttempts) || 1)),
+        intervalMs: STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS,
+        ...cleanPollOverrides,
+      };
+    }
+
     function resolveMailPollingTimeouts(mail, timedPoll) {
       const payload = normalizeIcloudMailPollPayload(mail, timedPoll?.payload || {});
       const defaultResponseTimeoutMs = Math.max(1000, Number(timedPoll?.responseTimeoutMs) || 30000);
@@ -879,17 +892,20 @@
         ...cleanPollOverrides
       } = pollOverrides;
       const basePayload = {
-        ...getVerificationPollPayload(step, state),
-        ...cleanPollOverrides,
+        ...buildLuckmailPollOverrides(step, state, cleanPollOverrides),
       };
       const isStep8LuckmailLoginCode = Number(step) === 8;
-      const maxAttempts = isStep8LuckmailLoginCode
-        ? Math.max(1, Number(basePayload.maxAttempts) || STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS)
-        : Math.max(1, Number(basePayload.maxAttempts) || 1);
-      const intervalMs = Math.max(
-        STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS,
-        Number(basePayload.intervalMs) || STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS
-      );
+      const explicitMaxAttempts = Number(cleanPollOverrides.maxAttempts);
+      const payloadMaxAttempts = Number(basePayload.maxAttempts);
+      const maxAttempts = Number.isFinite(explicitMaxAttempts) && explicitMaxAttempts > 0
+        ? Math.max(1, Math.floor(explicitMaxAttempts))
+        : (isStep8LuckmailLoginCode
+          ? STEP8_LUCKMAIL_CODE_POLL_MAX_ATTEMPTS
+          : Math.max(1, Math.floor(payloadMaxAttempts) || 1));
+      const explicitIntervalMs = Number(cleanPollOverrides.intervalMs);
+      const intervalMs = Number.isFinite(explicitIntervalMs) && explicitIntervalMs > 0
+        ? Math.max(1, Math.floor(explicitIntervalMs))
+        : STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS;
       let lastError = null;
       let lastStep8RetryableCodeError = null;
 
@@ -972,12 +988,11 @@
         return pollHotmailVerificationCode(step, state, timedPoll.payload);
       }
       if (mail.provider === LUCKMAIL_PROVIDER) {
+        const luckmailPollOverrides = buildLuckmailPollOverrides(step, state, cleanPollOverrides);
         const timedPoll = await applyMailPollingTimeBudget(step, {
-          ...getVerificationPollPayload(step, state),
-          ...cleanPollOverrides,
+          ...luckmailPollOverrides,
         }, cleanPollOverrides, `轮询${getVerificationCodeLabel(step)}验证码邮箱`);
         return pollLuckmailVerificationCodeWithResend(step, state, {
-          ...cleanPollOverrides,
           ...timedPoll.payload,
           onResendRequestedAt,
         });
@@ -1345,6 +1360,12 @@
           };
           if (nextFilterAfterTimestamp !== null && nextFilterAfterTimestamp !== undefined) {
             pollOptions.filterAfterTimestamp = nextFilterAfterTimestamp;
+          }
+          if (options.maxAttempts !== undefined) {
+            pollOptions.maxAttempts = options.maxAttempts;
+          }
+          if (options.intervalMs !== undefined) {
+            pollOptions.intervalMs = options.intervalMs;
           }
           const result = await pollFreshVerificationCode(step, state, mail, pollOptions);
           lastResendAt = Number(result?.lastResendAt) || lastResendAt;

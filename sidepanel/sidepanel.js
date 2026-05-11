@@ -344,6 +344,7 @@ const inputLuckmailBaseUrl = document.getElementById('input-luckmail-base-url');
 const selectLuckmailEmailType = document.getElementById('select-luckmail-email-type');
 const inputLuckmailDomain = document.getElementById('input-luckmail-domain');
 const inputLuckmailEmailWaitSeconds = document.getElementById('input-luckmail-email-wait-seconds');
+const inputLuckmailCodePollIntervalSeconds = document.getElementById('input-luckmail-code-poll-interval-seconds');
 const btnLuckmailRefresh = document.getElementById('btn-luckmail-refresh');
 const btnLuckmailDisableUsed = document.getElementById('btn-luckmail-disable-used');
 const luckmailSummary = document.getElementById('luckmail-summary');
@@ -854,6 +855,9 @@ const DEFAULT_LUCKMAIL_EMAIL_TYPE = 'ms_graph';
 const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
 const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
 const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;
+const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN = 5;
+const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX = 60;
+const DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS = 15;
 const DISPLAY_TIMEZONE = 'Asia/Shanghai';
 const DEFAULT_ACCOUNT_RUN_HISTORY_HELPER_BASE_URL = 'http://127.0.0.1:17373';
 const CONTRIBUTION_UPLOAD_URL = 'https://apikey.qzz.io/';
@@ -3215,6 +3219,9 @@ function collectSettingsPayload() {
   const defaultLuckmailEmailWaitSeconds = typeof DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS !== 'undefined'
     ? DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS
     : 300;
+  const defaultLuckmailCodePollIntervalSeconds = typeof DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS !== 'undefined'
+    ? DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS
+    : 15;
   const heroSmsReuseEnabledValue = typeof inputHeroSmsReuseEnabled !== 'undefined' && inputHeroSmsReuseEnabled
     ? normalizeHeroSmsReuseEnabledValue(inputHeroSmsReuseEnabled.checked)
     : defaultHeroSmsReuseEnabled;
@@ -3328,6 +3335,12 @@ function collectSettingsPayload() {
       latestState?.luckmailEmailWaitSeconds
     )
     : defaultLuckmailEmailWaitSeconds;
+  const luckmailCodePollIntervalSecondsValue = typeof inputLuckmailCodePollIntervalSeconds !== 'undefined' && inputLuckmailCodePollIntervalSeconds
+    ? normalizeLuckmailCodePollIntervalSecondsValue(
+      inputLuckmailCodePollIntervalSeconds.value,
+      latestState?.luckmailCodePollIntervalSeconds
+    )
+    : defaultLuckmailCodePollIntervalSeconds;
   const selectedPhoneSmsCountry = phoneSmsProviderValue === PHONE_SMS_PROVIDER_FIVE_SIM
     ? ((typeof getSelectedFiveSimCountries === 'function' ? getSelectedFiveSimCountries()[0] : null)
       || { id: DEFAULT_FIVE_SIM_COUNTRY_ID, code: DEFAULT_FIVE_SIM_COUNTRY_ID, label: DEFAULT_FIVE_SIM_COUNTRY_LABEL })
@@ -3583,6 +3596,7 @@ function collectSettingsPayload() {
     luckmailEmailType: normalizeLuckmailEmailType(selectLuckmailEmailType.value),
     luckmailDomain: inputLuckmailDomain.value.trim(),
     luckmailEmailWaitSeconds: luckmailEmailWaitSecondsValue,
+    luckmailCodePollIntervalSeconds: luckmailCodePollIntervalSecondsValue,
     cloudflareDomain: selectedCloudflareDomain,
     cloudflareDomains: domains,
     cloudflareTempEmailBaseUrl: normalizeCloudflareTempEmailBaseUrlValue(inputTempEmailBaseUrl.value),
@@ -8538,6 +8552,11 @@ function applySettingsState(state) {
       normalizeLuckmailEmailWaitSecondsValue(state?.luckmailEmailWaitSeconds, DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS)
     );
   }
+  if (typeof inputLuckmailCodePollIntervalSeconds !== 'undefined' && inputLuckmailCodePollIntervalSeconds) {
+    inputLuckmailCodePollIntervalSeconds.value = String(
+      normalizeLuckmailCodePollIntervalSecondsValue(state?.luckmailCodePollIntervalSeconds, DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS)
+    );
+  }
   applyCloudflareTempEmailSettingsState(state);
   if (typeof applyCloudMailSettingsState === 'function') {
     applyCloudMailSettingsState(state);
@@ -9285,6 +9304,18 @@ function normalizeLuckmailEmailWaitSecondsValue(value, fallback = DEFAULT_LUCKMA
     );
   }
   return Math.max(LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.min(LUCKMAIL_EMAIL_WAIT_SECONDS_MAX, parsed));
+}
+
+function normalizeLuckmailCodePollIntervalSecondsValue(value, fallback = DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS) {
+  const rawValue = String(value ?? '').trim();
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(
+      LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN,
+      Math.min(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX, Number(fallback) || DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS)
+    );
+  }
+  return Math.max(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN, Math.min(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX, parsed));
 }
 
 function getSelectedEmailGenerator() {
@@ -11740,6 +11771,19 @@ if (typeof inputLuckmailEmailWaitSeconds !== 'undefined' && inputLuckmailEmailWa
   });
 }
 
+if (typeof inputLuckmailCodePollIntervalSeconds !== 'undefined' && inputLuckmailCodePollIntervalSeconds) {
+  inputLuckmailCodePollIntervalSeconds.addEventListener('input', () => {
+    markSettingsDirty(true);
+    scheduleSettingsAutoSave();
+  });
+  inputLuckmailCodePollIntervalSeconds.addEventListener('blur', () => {
+    inputLuckmailCodePollIntervalSeconds.value = String(
+      normalizeLuckmailCodePollIntervalSecondsValue(inputLuckmailCodePollIntervalSeconds.value, DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS)
+    );
+    saveSettings({ silent: true }).catch(() => { });
+  });
+}
+
 selectLuckmailEmailType?.addEventListener('change', () => {
   markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => { });
@@ -13863,6 +13907,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       ) {
         inputLuckmailEmailWaitSeconds.value = String(
           normalizeLuckmailEmailWaitSecondsValue(message.payload.luckmailEmailWaitSeconds, DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS)
+        );
+      }
+      if (
+        message.payload.luckmailCodePollIntervalSeconds !== undefined
+        && typeof inputLuckmailCodePollIntervalSeconds !== 'undefined'
+        && inputLuckmailCodePollIntervalSeconds
+      ) {
+        inputLuckmailCodePollIntervalSeconds.value = String(
+          normalizeLuckmailCodePollIntervalSecondsValue(message.payload.luckmailCodePollIntervalSeconds, DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS)
         );
       }
       if (message.payload.luckmailUsedPurchases !== undefined && isLuckmailProvider()) {

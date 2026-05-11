@@ -483,6 +483,7 @@ return {
 test('buildPersistentSettingsPayload keeps LuckMail config fields for storage.local persistence', () => {
   const bundle = [
     extractFunction('normalizeLuckmailEmailWaitSeconds'),
+    extractFunction('normalizeLuckmailCodePollIntervalSeconds'),
     extractFunction('normalizePersistentSettingValue'),
     extractFunction('buildPersistentSettingsPayload'),
   ].join('\n');
@@ -493,12 +494,16 @@ const DEFAULT_LUCKMAIL_EMAIL_TYPE = 'ms_graph';
 const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
 const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
 const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;
+const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN = 5;
+const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX = 60;
+const DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS = 15;
 const PERSISTED_SETTING_DEFAULTS = {
   luckmailApiKey: '',
   luckmailBaseUrl: DEFAULT_LUCKMAIL_BASE_URL,
   luckmailEmailType: DEFAULT_LUCKMAIL_EMAIL_TYPE,
   luckmailDomain: '',
   luckmailEmailWaitSeconds: DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS,
+  luckmailCodePollIntervalSeconds: DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS,
   luckmailUsedPurchases: {},
   luckmailPreserveTagId: 0,
   luckmailPreserveTagName: '保留',
@@ -543,6 +548,7 @@ return {
     luckmailEmailType: 'ms_imap',
     luckmailDomain: ' outlook.com ',
     luckmailEmailWaitSeconds: '45',
+    luckmailCodePollIntervalSeconds: '7',
   });
 
   assert.deepStrictEqual(payload, {
@@ -551,12 +557,21 @@ return {
     luckmailEmailType: 'ms_imap',
     luckmailDomain: 'outlook.com',
     luckmailEmailWaitSeconds: 45,
+    luckmailCodePollIntervalSeconds: 7,
   });
 
   assert.deepStrictEqual(api.buildPersistentSettingsPayload({
     luckmailEmailWaitSeconds: '9999',
+    luckmailCodePollIntervalSeconds: '999',
   }), {
     luckmailEmailWaitSeconds: 1800,
+    luckmailCodePollIntervalSeconds: 60,
+  });
+
+  assert.deepStrictEqual(api.buildPersistentSettingsPayload({
+    luckmailCodePollIntervalSeconds: '4',
+  }), {
+    luckmailCodePollIntervalSeconds: 5,
   });
 
   const statePayload = api.buildPersistentSettingsPayload({
@@ -790,12 +805,16 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
     'const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;',
     'const LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;',
     'const DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS = 300;',
+    'const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN = 5;',
+    'const LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX = 60;',
+    'const DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS = 15;',
     'const DEFAULT_STATE = {',
     "  luckmailApiKey: '',",
     "  luckmailBaseUrl: 'https://mails.luckyous.com',",
     "  luckmailEmailType: 'ms_graph',",
     "  luckmailDomain: '',",
     '  luckmailEmailWaitSeconds: DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS,',
+    '  luckmailCodePollIntervalSeconds: DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS,',
     "  panelMode: 'cpa',",
     '  luckmailUsedPurchases: {},',
     '  luckmailPreserveTagId: 0,',
@@ -841,6 +860,14 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
     '  }',
     '  return Math.min(LUCKMAIL_EMAIL_WAIT_SECONDS_MAX, Math.max(LUCKMAIL_EMAIL_WAIT_SECONDS_MIN, Math.floor(numeric)));',
     '}',
+    'function normalizeLuckmailCodePollIntervalSeconds(value, fallback = DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS) {',
+    '  const rawValue = String(value ?? \'\').trim();',
+    '  const numeric = Number(rawValue);',
+    '  if (!rawValue || !Number.isFinite(numeric)) {',
+    '    return Math.min(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX, Math.max(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN, Math.floor(Number(fallback) || DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS)));',
+    '  }',
+    '  return Math.min(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX, Math.max(LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN, Math.floor(numeric)));',
+    '}',
     'async function getPersistedSettings() {',
     "  return { mailProvider: '163' };",
     '}',
@@ -850,8 +877,8 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
     'const chrome = {',
     '  storage: {',
     '    session: {',
-    '      async get() {',
-    '        return {',
+    '      async get(keys = []) {',
+    '        const values = {',
     "          seenCodes: ['seen-1'],",
     "          seenInbucketMailIds: ['mail-1'],",
     "          accounts: [{ email: 'saved@example.com' }],",
@@ -863,10 +890,15 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
     "          luckmailEmailType: 'ms_imap',",
     "          luckmailDomain: 'outlook.com',",
     "          luckmailEmailWaitSeconds: '45',",
+    "          luckmailCodePollIntervalSeconds: '7',",
     "          luckmailUsedPurchases: { 88: true },",
     '          luckmailPreserveTagId: 9,',
     "          luckmailPreserveTagName: '保留',",
     '        };',
+    '        if (!Array.isArray(keys)) {',
+    '          return values;',
+    '        }',
+    '        return Object.fromEntries(keys.filter((key) => key in values).map((key) => [key, values[key]]));',
     '      },',
     '      async clear() {',
     '        cleared = true;',
@@ -896,6 +928,7 @@ test('resetState preserves LuckMail session config, used map, and preserve tag c
   assert.equal(snapshot.storedPayload.luckmailEmailType, 'ms_imap');
   assert.equal(snapshot.storedPayload.luckmailDomain, 'outlook.com');
   assert.equal(snapshot.storedPayload.luckmailEmailWaitSeconds, 45);
+  assert.equal(snapshot.storedPayload.luckmailCodePollIntervalSeconds, 7);
   assert.deepStrictEqual(snapshot.storedPayload.luckmailUsedPurchases, { 88: true });
   assert.equal(snapshot.storedPayload.luckmailPreserveTagId, 9);
   assert.equal(snapshot.storedPayload.luckmailPreserveTagName, '保留');

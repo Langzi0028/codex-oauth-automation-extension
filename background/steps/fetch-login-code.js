@@ -5,6 +5,9 @@
   const STEP8_ADD_EMAIL_URL = 'https://auth.openai.com/add-email';
   const STEP8_CURRENT_STEP_RECOVERY_MAX_ATTEMPTS = 3;
   const STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS = 15000;
+  const STEP8_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN = 5;
+  const STEP8_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX = 60;
+  const STEP8_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_DEFAULT = 15;
   const STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
   const STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_MAX = 1800;
   const STEP8_LUCKMAIL_EMAIL_WAIT_SECONDS_DEFAULT = 300;
@@ -121,9 +124,26 @@
       );
     }
 
+    function normalizeStep8LuckmailCodePollIntervalSeconds(value) {
+      const rawValue = String(value ?? '').trim();
+      const numeric = Number(rawValue);
+      if (!rawValue || !Number.isFinite(numeric)) {
+        return STEP8_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_DEFAULT;
+      }
+      return Math.min(
+        STEP8_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MAX,
+        Math.max(STEP8_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS_MIN, Math.floor(numeric))
+      );
+    }
+
+    function getStep8LuckmailCodePollIntervalMs(state = {}) {
+      const intervalSeconds = normalizeStep8LuckmailCodePollIntervalSeconds(state?.luckmailCodePollIntervalSeconds);
+      return Math.max(1, intervalSeconds * 1000);
+    }
+
     function getStep8LuckmailCodePollMaxAttempts(state = {}) {
       const waitSeconds = normalizeStep8LuckmailEmailWaitSeconds(state?.luckmailEmailWaitSeconds);
-      return Math.max(1, Math.ceil((waitSeconds * 1000) / STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS));
+      return Math.max(1, Math.ceil((waitSeconds * 1000) / getStep8LuckmailCodePollIntervalMs(state)));
     }
 
     function isStep8LuckmailCodePollingExhaustedError(error) {
@@ -646,7 +666,7 @@
         ...(mail.provider === LUCKMAIL_PROVIDER
           ? {
             maxAttempts: getStep8LuckmailCodePollMaxAttempts(preparedState),
-            intervalMs: STEP8_LUCKMAIL_CODE_POLL_INTERVAL_MS,
+            intervalMs: getStep8LuckmailCodePollIntervalMs(preparedState),
           }
           : {}),
       });

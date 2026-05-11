@@ -1338,6 +1338,145 @@ test('verification flow polls Step 8 LuckMail /code without clicking auth-page r
   ]);
 });
 
+test('verification flow honors a configured Step 8 LuckMail /code polling interval below 15 seconds', async () => {
+  const events = [];
+  let pollCalls = 0;
+
+  const helpers = api.createVerificationFlowHelpers({
+    addLog: async () => {},
+    chrome: { tabs: { update: async () => {} } },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    completeStepFromBackground: async () => {},
+    confirmCustomVerificationStepBypassRequest: async () => ({ confirmed: true }),
+    getHotmailVerificationPollConfig: () => ({}),
+    getHotmailVerificationRequestTimestamp: () => 0,
+    getState: async () => ({}),
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isStopError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    MAIL_2925_VERIFICATION_INTERVAL_MS: 15000,
+    MAIL_2925_VERIFICATION_MAX_ATTEMPTS: 15,
+    pollCloudflareTempEmailVerificationCode: async () => ({}),
+    pollHotmailVerificationCode: async () => ({}),
+    pollLuckmailVerificationCode: async (_step, _state, payload) => {
+      pollCalls += 1;
+      events.push(['poll', payload.maxAttempts, payload.intervalMs]);
+      if (pollCalls === 1) {
+        throw new Error('步骤 8：LuckMail /code 接口暂未返回新的验证码。');
+      }
+      return {
+        code: '654321',
+        emailTimestamp: 123,
+      };
+    },
+    sendToContentScript: async (_source, message) => {
+      if (message.type === 'RESEND_VERIFICATION_CODE') {
+        events.push(['resend', message.step]);
+      }
+      return {};
+    },
+    sendToMailContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    setStepStatus: async () => {},
+    sleepWithStop: async (ms) => {
+      events.push(['sleep', ms]);
+    },
+    throwIfStopped: () => {},
+    VERIFICATION_POLL_MAX_ROUNDS: 5,
+  });
+
+  const result = await helpers.pollFreshVerificationCode(
+    8,
+    {
+      email: 'user@example.com',
+      lastLoginCode: null,
+    },
+    { provider: 'luckmail-api', label: 'LuckMail（API 购邮）' },
+    {
+      maxAttempts: 2,
+      intervalMs: 5000,
+      resendIntervalMs: 0,
+    }
+  );
+
+  assert.equal(result.code, '654321');
+  assert.deepStrictEqual(events, [
+    ['poll', 1, 5000],
+    ['sleep', 5000],
+    ['poll', 1, 5000],
+  ]);
+});
+
+test('verification flow forwards Step 8 LuckMail polling budget from resolve options', async () => {
+  let pollCalls = 0;
+  const sleepCalls = [];
+  let completedStep = null;
+
+  const helpers = api.createVerificationFlowHelpers({
+    addLog: async () => {},
+    chrome: { tabs: { update: async () => {} } },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    completeStepFromBackground: async (step) => {
+      completedStep = step;
+    },
+    confirmCustomVerificationStepBypassRequest: async () => ({ confirmed: true }),
+    getHotmailVerificationPollConfig: () => ({}),
+    getHotmailVerificationRequestTimestamp: () => 0,
+    getState: async () => ({}),
+    getTabId: async () => 1,
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isStopError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    MAIL_2925_VERIFICATION_INTERVAL_MS: 15000,
+    MAIL_2925_VERIFICATION_MAX_ATTEMPTS: 15,
+    pollCloudflareTempEmailVerificationCode: async () => ({}),
+    pollHotmailVerificationCode: async () => ({}),
+    pollLuckmailVerificationCode: async (_step, _state, payload) => {
+      pollCalls += 1;
+      assert.equal(payload.maxAttempts, 1);
+      assert.equal(payload.intervalMs, 15000);
+      if (pollCalls < 20) {
+        throw new Error('步骤 8：LuckMail /code 接口暂未返回新的验证码。');
+      }
+      return {
+        code: '654321',
+        emailTimestamp: 123,
+      };
+    },
+    sendToContentScript: async () => ({}),
+    sendToMailContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    setStepStatus: async () => {},
+    sleepWithStop: async (ms) => {
+      sleepCalls.push(ms);
+    },
+    throwIfStopped: () => {},
+    VERIFICATION_POLL_MAX_ROUNDS: 5,
+  });
+
+  await helpers.resolveVerificationStep(
+    8,
+    {
+      email: 'user@example.com',
+      lastLoginCode: null,
+    },
+    { provider: 'luckmail-api', label: 'LuckMail（API 购邮）' },
+    {
+      maxAttempts: 20,
+      intervalMs: 15000,
+      resendIntervalMs: 0,
+      requestFreshCodeFirst: false,
+      disableTimeBudgetCap: true,
+    }
+  );
+
+  assert.equal(pollCalls, 20);
+  assert.equal(sleepCalls.length, 19);
+  assert.equal(sleepCalls.every((ms) => ms === 15000), true);
+  assert.equal(completedStep, 8);
+});
+
 test('verification flow escalates exhausted Step 8 LuckMail polling to Step 7 restart without resend', async () => {
   const events = [];
 
