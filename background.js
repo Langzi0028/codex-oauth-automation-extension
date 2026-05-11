@@ -5236,6 +5236,13 @@ async function resolveLuckmailVerificationMail(client, token, filters = {}, toke
     if (inlineMatch) {
       return inlineMatch;
     }
+    if (tokenCode.mail.message_id && !tokenMail.verification_code) {
+      const detail = await client.user.getTokenMailDetail(token, tokenCode.mail.message_id);
+      const detailMatch = pickLuckmailVerificationMail([detail], filters);
+      if (detailMatch) {
+        return detailMatch;
+      }
+    }
   }
 
   const mailList = await client.user.getTokenMails(token);
@@ -5330,9 +5337,16 @@ async function pollLuckmailVerificationCode(step, state, pollPayload = {}) {
   const maxAttempts = Math.max(1, Number(pollPayload.maxAttempts) || 3);
   const intervalMs = Math.max(15000, Number(pollPayload.intervalMs) || 15000);
   const excludedCodes = new Set((pollPayload.excludeCodes || []).filter(Boolean));
+  const filters = {
+    afterTimestamp: pollPayload.filterAfterTimestamp || 0,
+    senderFilters: pollPayload.senderFilters || [],
+    subjectFilters: pollPayload.subjectFilters || [],
+    excludeCodes: Array.from(excludedCodes),
+  };
 
   const initialCursor = normalizeLuckmailMailCursor((await getState()).currentLuckmailMailCursor);
-  if (!initialCursor.messageId && !initialCursor.receivedAt) {
+  const shouldSnapshotExistingLuckmailMails = Number(step) !== 8;
+  if (shouldSnapshotExistingLuckmailMails && !initialCursor.messageId && !initialCursor.receivedAt) {
     const mailList = await client.user.getTokenMails(purchase.token);
     const baselineCursor = buildLuckmailBaselineCursor(mailList?.mails || []);
     await setLuckmailMailCursorState(baselineCursor);
@@ -5354,13 +5368,20 @@ async function pollLuckmailVerificationCode(step, state, pollPayload = {}) {
         throw new Error(`步骤 ${step}：LuckMail token 对应邮箱与当前邮箱不一致。当前邮箱：${expectedEmail}；token 邮箱：${remoteEmail}`);
       }
 
-      const tokenMail = tokenCode.verification_code && tokenCode.mail && !tokenCode.mail.verification_code
+      let tokenMail = tokenCode.verification_code && tokenCode.mail && !tokenCode.mail.verification_code
         ? {
           ...tokenCode.mail,
           verification_code: tokenCode.verification_code,
         }
         : tokenCode.mail;
-      const code = String(tokenCode?.verification_code || tokenMail?.verification_code || '').trim();
+      let code = String(tokenCode?.verification_code || tokenMail?.verification_code || '').trim();
+      if ((!code || !tokenMail) && (tokenCode?.has_new_mail || tokenCode?.verification_code || tokenCode?.mail)) {
+        const match = await resolveLuckmailVerificationMail(client, purchase.token, filters, tokenCode);
+        if (match?.mail) {
+          tokenMail = match.mail;
+          code = String(match.code || match.mail.verification_code || '').trim();
+        }
+      }
       const cursor = normalizeLuckmailMailCursor((await getState()).currentLuckmailMailCursor);
 
       if (!code || !tokenMail) {
