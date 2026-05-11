@@ -10699,6 +10699,8 @@ async function runAutoSequenceFromStep(startStep, context = {}) {
   let goPayCheckoutRestartCount = 0;
   let gpcCheckoutRestartCount = 0;
   let step4RestartCount = 0;
+  let sameSignupPhoneRetryCount = 0;
+  let sameSignupPhoneRetryActivationKey = '';
   const stepIdleRestartCounts = new Map();
   let currentStartStep = startStep;
   let continueCurrentAttempt = continued;
@@ -10929,6 +10931,61 @@ async function runAutoSequenceFromStep(startStep, context = {}) {
         const isPhoneResendBanned = typeof phoneVerificationHelpers !== 'undefined'
           && typeof phoneVerificationHelpers?.isPhoneResendBannedNumberError === 'function'
           && phoneVerificationHelpers.isPhoneResendBannedNumberError(err);
+        const isSignupPhoneRetryStep2 = typeof phoneVerificationHelpers !== 'undefined'
+          && typeof phoneVerificationHelpers?.isSignupPhoneRetryStep2Error === 'function'
+          && phoneVerificationHelpers.isSignupPhoneRetryStep2Error(err);
+        if (isSignupPhoneRetryStep2) {
+          const preservedState = await getState();
+          const activeSignupActivation = preservedState?.signupPhoneActivation || null;
+          const retryActivationKey = String(
+            activeSignupActivation?.activationId
+            || activeSignupActivation?.phoneNumber
+            || preservedState?.signupPhoneNumber
+            || (String(preservedState?.accountIdentifierType || '').trim() === 'phone' ? preservedState?.accountIdentifier : '')
+            || ''
+          ).trim();
+          if (sameSignupPhoneRetryActivationKey !== retryActivationKey) {
+            sameSignupPhoneRetryActivationKey = retryActivationKey;
+            sameSignupPhoneRetryCount = 0;
+          }
+          sameSignupPhoneRetryCount += 1;
+          const samePhoneRetryLimit = normalizePhoneCodeTimeoutWindows(preservedState?.phoneCodeTimeoutWindows);
+          if (sameSignupPhoneRetryCount >= samePhoneRetryLimit) {
+            if (activeSignupActivation && typeof phoneVerificationHelpers?.cancelSignupPhoneActivation === 'function') {
+              try {
+                await phoneVerificationHelpers.cancelSignupPhoneActivation(preservedState, activeSignupActivation);
+              } catch (cancelError) {
+                await addLog(
+                  `步骤 4：取消超时注册手机号接码订单失败，将继续更换号码。${getErrorMessage(cancelError)}`,
+                  'warn'
+                );
+              }
+            }
+            const exhaustedError = new Error(`PHONE_RESEND_BANNED_NUMBER::注册手机号短信等待超时已达到 ${samePhoneRetryLimit} 轮，需要重新获取手机号。${getErrorMessage(err)}`);
+            await restartSignupPhonePasswordMismatchAttemptFromStep(4, step4RestartCount, exhaustedError);
+            sameSignupPhoneRetryActivationKey = '';
+            sameSignupPhoneRetryCount = 0;
+            currentStartStep = 1;
+            continueCurrentAttempt = true;
+            restartFromStep1WithCurrentEmail = true;
+            break;
+          }
+          const preservedPassword = typeof preservedState?.password === 'string' ? preservedState.password : '';
+          await addLog(
+            `步骤 4：手机短信等待超时，准备回到步骤 2 复用当前手机号重试（同号第 ${sameSignupPhoneRetryCount}/${samePhoneRetryLimit} 次，总第 ${step4RestartCount} 次重开）。原因：${getErrorMessage(err)}`,
+            'warn'
+          );
+          await invalidateDownstreamAfterStepRestart(2, {
+            logLabel: `步骤 4 手机短信等待超时后准备回到步骤 2 复用当前手机号重试（第 ${sameSignupPhoneRetryCount} 次重开）`,
+          });
+          if (preservedPassword.trim()) {
+            await setState({ password: preservedPassword });
+          }
+          currentStartStep = 2;
+          continueCurrentAttempt = true;
+          restartFromStep1WithCurrentEmail = true;
+          break;
+        }
         if (isSignupPhonePasswordMismatchFailure(err) || isPhoneResendBanned) {
           await restartSignupPhonePasswordMismatchAttemptFromStep(4, step4RestartCount, err);
         } else {

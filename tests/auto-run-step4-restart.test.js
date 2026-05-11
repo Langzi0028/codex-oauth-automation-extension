@@ -57,6 +57,10 @@ const bundle = [
   'const AUTO_RUN_STEP_IDLE_LOG_CHECK_INTERVAL_MS = 5000;',
   'const AUTO_RUN_STEP_IDLE_RESTART_MAX_ATTEMPTS = 3;',
   "const AUTO_RUN_STEP_IDLE_RESTART_ERROR_PREFIX = 'AUTO_RUN_STEP_IDLE_RESTART::';",
+  'const PHONE_CODE_TIMEOUT_WINDOWS_MIN = 1;',
+  'const PHONE_CODE_TIMEOUT_WINDOWS_MAX = 10;',
+  'const DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2;',
+  extractFunction('normalizePhoneCodeTimeoutWindows'),
   extractFunction('isAddPhoneAuthUrl'),
   extractFunction('isAddPhoneAuthState'),
   extractFunction('isMail2925ThreadTerminatedError'),
@@ -795,6 +799,606 @@ return {
   assert.equal(currentState.password, 'Secret123!');
   assert.equal(events.logs.some(({ message }) => /丢弃当前注册手机号并回到步骤 1 重新开始/.test(message)), true);
   assert.equal(events.logs.some(({ message }) => /已清空本轮注册手机号与接码订单/.test(message)), true);
+});
+
+test('auto-run routes signup phone retry signal from step 4 back to step 2 without clearing phone activation', async () => {
+  const api = new Function(`
+const AUTO_STEP_DELAYS = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0 };
+const LAST_STEP_ID = 10;
+const FINAL_OAUTH_CHAIN_START_STEP = 7;
+const SIGNUP_METHOD_PHONE = 'phone';
+const chrome = {
+  tabs: {
+    update: async () => {},
+  },
+  runtime: {
+    sendMessage: async () => {},
+  },
+};
+
+let remainingFailures = 1;
+let currentState = {
+  email: '',
+  password: 'Secret123!',
+  signupMethod: 'phone',
+  phoneCodeTimeoutWindows: 2,
+  accountIdentifierType: 'phone',
+  accountIdentifier: '+56988841722',
+  signupPhoneNumber: '+56988841722',
+  signupPhoneActivation: { activationId: 'signup-activation', phoneNumber: '+56988841722' },
+  signupPhoneCompletedActivation: null,
+  signupPhoneVerificationRequestedAt: null,
+  signupPhoneVerificationPurpose: '',
+  currentPhoneVerificationCode: '',
+  stepStatuses: {
+    1: 'completed',
+    2: 'completed',
+    3: 'completed',
+    4: 'pending',
+    5: 'pending',
+    6: 'pending',
+    7: 'pending',
+    8: 'pending',
+    9: 'pending',
+    10: 'pending',
+  },
+};
+const originalActivation = currentState.signupPhoneActivation;
+const events = {
+  steps: [],
+  invalidations: [],
+  logs: [],
+  setStateCalls: [],
+};
+
+async function addLog(message, level = 'info') {
+  events.logs.push({ message, level });
+}
+
+async function ensureAutoEmailReady() {
+  return '';
+}
+
+async function broadcastAutoRunStatus() {}
+async function ensureResolvedSignupMethodForRun() { return 'phone'; }
+
+async function getState() {
+  return currentState;
+}
+
+async function setState(updates) {
+  currentState = {
+    ...currentState,
+    ...updates,
+    stepStatuses: updates.stepStatuses ? { ...updates.stepStatuses } : currentState.stepStatuses,
+  };
+  events.setStateCalls.push(updates);
+}
+
+function isStopError(error) {
+  return (error?.message || String(error || '')) === '流程已被用户停止。';
+}
+
+function isStepDoneStatus(status) {
+  return status === 'completed' || status === 'manual_completed' || status === 'skipped';
+}
+
+async function executeStepAndWait(step) {
+  events.steps.push(step);
+  if (step === 4 && remainingFailures > 0) {
+    remainingFailures -= 1;
+    throw new Error('PHONE_SIGNUP_RETRY_STEP2::步骤 4：短信等待窗口超时，回到步骤 2 复用当前手机号。');
+  }
+  if (step === 2) {
+    currentState = {
+      ...currentState,
+      signupPhoneActivation: originalActivation,
+      signupPhoneNumber: originalActivation.phoneNumber,
+    };
+  }
+}
+
+async function getTabId() {
+  return 1;
+}
+
+async function invalidateDownstreamAfterStepRestart(step, options = {}) {
+  events.invalidations.push({ step, options });
+  currentState = {
+    ...currentState,
+    password: null,
+    stepStatuses: {
+      1: currentState.stepStatuses[1] || 'completed',
+      2: step < 2 ? 'pending' : currentState.stepStatuses[2],
+      3: 'pending',
+      4: 'pending',
+      5: 'pending',
+      6: 'pending',
+      7: 'pending',
+      8: 'pending',
+      9: 'pending',
+      10: 'pending',
+    },
+    currentPhoneVerificationCode: '',
+    signupPhoneVerificationRequestedAt: null,
+    signupPhoneVerificationPurpose: '',
+  };
+}
+
+function getLoginAuthStateLabel(state) {
+  return state || 'unknown';
+}
+
+function getErrorMessage(error) {
+  return error?.message || String(error || '');
+}
+
+const phoneVerificationHelpers = {
+  isPhoneResendBannedNumberError(error) {
+    return String(error?.message || error || '').startsWith('PHONE_RESEND_BANNED_NUMBER::');
+  },
+  isSignupPhoneRetryStep2Error(error) {
+    return String(error?.message || error || '').startsWith('PHONE_SIGNUP_RETRY_STEP2::');
+  },
+};
+
+async function getLoginAuthStateFromContent() {
+  return { state: 'password_page', url: 'https://auth.openai.com/log-in' };
+}
+
+${bundle}
+
+return {
+  async run() {
+    await runAutoSequenceFromStep(4, {
+      targetRun: 1,
+      totalRuns: 1,
+      attemptRuns: 1,
+      continued: true,
+    });
+    return { events, currentState, originalActivation };
+  },
+};
+`)();
+
+  const { events, currentState, originalActivation } = await api.run();
+
+  assert.deepStrictEqual(events.steps, [4, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepStrictEqual(events.invalidations, [
+    {
+      step: 2,
+      options: {
+        logLabel: '步骤 4 手机短信等待超时后准备回到步骤 2 复用当前手机号重试（第 1 次重开）',
+      },
+    },
+  ]);
+  assert.deepStrictEqual(currentState.signupPhoneActivation, originalActivation);
+  assert.equal(currentState.signupPhoneNumber, '+56988841722');
+  assert.equal(currentState.accountIdentifierType, 'phone');
+  assert.equal(currentState.accountIdentifier, '+56988841722');
+  assert.equal(currentState.password, 'Secret123!');
+  assert.equal(events.logs.some(({ message }) => /回到步骤 2 复用当前手机号/.test(message)), true);
+  assert.equal(events.logs.some(({ message }) => /丢弃当前注册手机号/.test(message)), false);
+});
+
+test('auto-run gives replacement signup phone its own retry-step2 budget after prior phone exhausts', async () => {
+  const api = new Function(`
+const AUTO_STEP_DELAYS = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0 };
+const LAST_STEP_ID = 10;
+const FINAL_OAUTH_CHAIN_START_STEP = 7;
+const SIGNUP_METHOD_PHONE = 'phone';
+const chrome = {
+  tabs: {
+    update: async () => {},
+  },
+  runtime: {
+    sendMessage: async () => {},
+  },
+};
+
+let originalFailures = 2;
+let replacementFailures = 1;
+const originalActivation = { activationId: 'signup-activation-a', phoneNumber: '+56988841722' };
+const replacementActivation = { activationId: 'signup-activation-b', phoneNumber: '+56988840000' };
+let currentState = {
+  email: '',
+  password: 'Secret123!',
+  signupMethod: 'phone',
+  phoneCodeTimeoutWindows: 2,
+  accountIdentifierType: 'phone',
+  accountIdentifier: originalActivation.phoneNumber,
+  signupPhoneNumber: originalActivation.phoneNumber,
+  signupPhoneActivation: originalActivation,
+  signupPhoneCompletedActivation: null,
+  signupPhoneVerificationRequestedAt: null,
+  signupPhoneVerificationPurpose: '',
+  currentPhoneVerificationCode: '',
+  stepStatuses: {
+    1: 'completed',
+    2: 'completed',
+    3: 'completed',
+    4: 'pending',
+    5: 'pending',
+    6: 'pending',
+    7: 'pending',
+    8: 'pending',
+    9: 'pending',
+    10: 'pending',
+  },
+};
+const events = {
+  steps: [],
+  invalidations: [],
+  logs: [],
+  setStateCalls: [],
+  cancelCalls: [],
+};
+
+async function addLog(message, level = 'info') {
+  events.logs.push({ message, level });
+}
+
+async function ensureAutoEmailReady() {
+  return '';
+}
+
+async function broadcastAutoRunStatus() {}
+async function ensureResolvedSignupMethodForRun() { return 'phone'; }
+
+async function getState() {
+  return currentState;
+}
+
+async function setState(updates) {
+  currentState = {
+    ...currentState,
+    ...updates,
+    stepStatuses: updates.stepStatuses ? { ...updates.stepStatuses } : currentState.stepStatuses,
+  };
+  events.setStateCalls.push(updates);
+}
+
+function isStopError(error) {
+  return (error?.message || String(error || '')) === '流程已被用户停止。';
+}
+
+function isStepDoneStatus(status) {
+  return status === 'completed' || status === 'manual_completed' || status === 'skipped';
+}
+
+async function executeStepAndWait(step) {
+  events.steps.push(step);
+  if (step === 4) {
+    if (currentState.signupPhoneActivation?.activationId === originalActivation.activationId && originalFailures > 0) {
+      originalFailures -= 1;
+      throw new Error('PHONE_SIGNUP_RETRY_STEP2::步骤 4：号码 A 短信等待窗口超时。');
+    }
+    if (currentState.signupPhoneActivation?.activationId === replacementActivation.activationId && replacementFailures > 0) {
+      replacementFailures -= 1;
+      throw new Error('PHONE_SIGNUP_RETRY_STEP2::步骤 4：号码 B 短信等待窗口超时。');
+    }
+  }
+  if (step === 2 && !currentState.signupPhoneActivation) {
+    currentState = {
+      ...currentState,
+      accountIdentifierType: 'phone',
+      accountIdentifier: replacementActivation.phoneNumber,
+      signupPhoneNumber: replacementActivation.phoneNumber,
+      signupPhoneActivation: replacementActivation,
+    };
+  }
+}
+
+async function getTabId() {
+  return 1;
+}
+
+async function invalidateDownstreamAfterStepRestart(step, options = {}) {
+  events.invalidations.push({ step, options });
+  currentState = {
+    ...currentState,
+    password: null,
+    stepStatuses: {
+      1: currentState.stepStatuses[1] || 'completed',
+      2: step < 2 ? 'pending' : currentState.stepStatuses[2],
+      3: 'pending',
+      4: 'pending',
+      5: 'pending',
+      6: 'pending',
+      7: 'pending',
+      8: 'pending',
+      9: 'pending',
+      10: 'pending',
+    },
+    currentPhoneVerificationCode: '',
+    signupPhoneVerificationRequestedAt: null,
+    signupPhoneVerificationPurpose: '',
+  };
+}
+
+function getLoginAuthStateLabel(state) {
+  return state || 'unknown';
+}
+
+function getErrorMessage(error) {
+  return error?.message || String(error || '');
+}
+
+const phoneVerificationHelpers = {
+  isPhoneResendBannedNumberError(error) {
+    return String(error?.message || error || '').startsWith('PHONE_RESEND_BANNED_NUMBER::');
+  },
+  isSignupPhoneRetryStep2Error(error) {
+    return String(error?.message || error || '').startsWith('PHONE_SIGNUP_RETRY_STEP2::');
+  },
+  cancelSignupPhoneActivation: async (state, activation) => {
+    events.cancelCalls.push({
+      stateActivation: state.signupPhoneActivation,
+      activation,
+    });
+    currentState = {
+      ...currentState,
+      accountIdentifierType: null,
+      accountIdentifier: '',
+      signupPhoneNumber: '',
+      signupPhoneActivation: null,
+      signupPhoneCompletedActivation: null,
+      signupPhoneVerificationRequestedAt: null,
+      signupPhoneVerificationPurpose: '',
+      currentPhoneVerificationCode: '',
+    };
+  },
+};
+
+async function getLoginAuthStateFromContent() {
+  return { state: 'password_page', url: 'https://auth.openai.com/log-in' };
+}
+
+${bundle}
+
+return {
+  async run() {
+    await runAutoSequenceFromStep(4, {
+      targetRun: 1,
+      totalRuns: 1,
+      attemptRuns: 1,
+      continued: true,
+    });
+    return { events, currentState, originalActivation, replacementActivation };
+  },
+};
+`)();
+
+  const { events, currentState, originalActivation, replacementActivation } = await api.run();
+
+  assert.deepStrictEqual(events.steps, [4, 2, 3, 4, 1, 2, 3, 4, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepStrictEqual(events.cancelCalls, [
+    {
+      stateActivation: originalActivation,
+      activation: originalActivation,
+    },
+  ]);
+  assert.deepStrictEqual(events.invalidations.map((entry) => entry.step), [2, 1, 2]);
+  assert.deepStrictEqual(currentState.signupPhoneActivation, replacementActivation);
+  assert.equal(currentState.signupPhoneNumber, replacementActivation.phoneNumber);
+  assert.equal(currentState.accountIdentifierType, 'phone');
+  assert.equal(currentState.accountIdentifier, replacementActivation.phoneNumber);
+  assert.equal(currentState.password, 'Secret123!');
+  assert.equal(events.logs.filter(({ message }) => /回到步骤 2 复用当前手机号/.test(message)).length, 2);
+});
+
+test('auto-run exhausts signup phone retry signal at timeout-window limit and restarts with a new phone', async () => {
+  const api = new Function(`
+const AUTO_STEP_DELAYS = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0 };
+const LAST_STEP_ID = 10;
+const FINAL_OAUTH_CHAIN_START_STEP = 7;
+const SIGNUP_METHOD_PHONE = 'phone';
+const chrome = {
+  tabs: {
+    update: async () => {},
+  },
+  runtime: {
+    sendMessage: async () => {},
+  },
+};
+
+let remainingFailures = 2;
+const originalActivation = { activationId: 'signup-activation', phoneNumber: '+56988841722' };
+const replacementActivation = { activationId: 'replacement-activation', phoneNumber: '+56988840000' };
+let currentState = {
+  email: '',
+  password: 'Secret123!',
+  signupMethod: 'phone',
+  phoneCodeTimeoutWindows: 2,
+  accountIdentifierType: 'phone',
+  accountIdentifier: originalActivation.phoneNumber,
+  signupPhoneNumber: originalActivation.phoneNumber,
+  signupPhoneActivation: originalActivation,
+  signupPhoneCompletedActivation: null,
+  signupPhoneVerificationRequestedAt: null,
+  signupPhoneVerificationPurpose: '',
+  currentPhoneVerificationCode: '',
+  stepStatuses: {
+    1: 'completed',
+    2: 'completed',
+    3: 'completed',
+    4: 'pending',
+    5: 'pending',
+    6: 'pending',
+    7: 'pending',
+    8: 'pending',
+    9: 'pending',
+    10: 'pending',
+  },
+};
+const events = {
+  steps: [],
+  invalidations: [],
+  logs: [],
+  setStateCalls: [],
+  cancelCalls: [],
+};
+
+async function addLog(message, level = 'info') {
+  events.logs.push({ message, level });
+}
+
+async function ensureAutoEmailReady() {
+  return '';
+}
+
+async function broadcastAutoRunStatus() {}
+async function ensureResolvedSignupMethodForRun() { return 'phone'; }
+
+async function getState() {
+  return currentState;
+}
+
+async function setState(updates) {
+  currentState = {
+    ...currentState,
+    ...updates,
+    stepStatuses: updates.stepStatuses ? { ...updates.stepStatuses } : currentState.stepStatuses,
+  };
+  events.setStateCalls.push(updates);
+}
+
+function isStopError(error) {
+  return (error?.message || String(error || '')) === '流程已被用户停止。';
+}
+
+function isStepDoneStatus(status) {
+  return status === 'completed' || status === 'manual_completed' || status === 'skipped';
+}
+
+async function executeStepAndWait(step) {
+  events.steps.push(step);
+  if (step === 4 && remainingFailures > 0) {
+    remainingFailures -= 1;
+    throw new Error('PHONE_SIGNUP_RETRY_STEP2::步骤 4：短信等待窗口超时，回到步骤 2 复用当前手机号。');
+  }
+  if (step === 2 && !currentState.signupPhoneActivation) {
+    currentState = {
+      ...currentState,
+      accountIdentifierType: 'phone',
+      accountIdentifier: replacementActivation.phoneNumber,
+      signupPhoneNumber: replacementActivation.phoneNumber,
+      signupPhoneActivation: replacementActivation,
+    };
+  }
+}
+
+async function getTabId() {
+  return 1;
+}
+
+async function invalidateDownstreamAfterStepRestart(step, options = {}) {
+  events.invalidations.push({ step, options });
+  currentState = {
+    ...currentState,
+    password: step <= 1 ? null : currentState.password,
+    stepStatuses: {
+      1: currentState.stepStatuses[1] || 'completed',
+      2: step < 2 ? 'pending' : currentState.stepStatuses[2],
+      3: 'pending',
+      4: 'pending',
+      5: 'pending',
+      6: 'pending',
+      7: 'pending',
+      8: 'pending',
+      9: 'pending',
+      10: 'pending',
+    },
+    currentPhoneVerificationCode: '',
+    signupPhoneVerificationRequestedAt: null,
+    signupPhoneVerificationPurpose: '',
+  };
+}
+
+function getLoginAuthStateLabel(state) {
+  return state || 'unknown';
+}
+
+function getErrorMessage(error) {
+  return error?.message || String(error || '');
+}
+
+const phoneVerificationHelpers = {
+  isPhoneResendBannedNumberError(error) {
+    return String(error?.message || error || '').startsWith('PHONE_RESEND_BANNED_NUMBER::');
+  },
+  isSignupPhoneRetryStep2Error(error) {
+    return String(error?.message || error || '').startsWith('PHONE_SIGNUP_RETRY_STEP2::');
+  },
+  cancelSignupPhoneActivation: async (state, activation) => {
+    events.cancelCalls.push({
+      stateActivation: state.signupPhoneActivation,
+      activation,
+    });
+    currentState = {
+      ...currentState,
+      accountIdentifierType: null,
+      accountIdentifier: '',
+      signupPhoneNumber: '',
+      signupPhoneActivation: null,
+      signupPhoneCompletedActivation: null,
+      signupPhoneVerificationRequestedAt: null,
+      signupPhoneVerificationPurpose: '',
+      currentPhoneVerificationCode: '',
+    };
+  },
+};
+
+async function getLoginAuthStateFromContent() {
+  return { state: 'password_page', url: 'https://auth.openai.com/log-in' };
+}
+
+${bundle}
+
+return {
+  async run() {
+    await runAutoSequenceFromStep(4, {
+      targetRun: 1,
+      totalRuns: 1,
+      attemptRuns: 1,
+      continued: true,
+    });
+    return { events, currentState, originalActivation, replacementActivation };
+  },
+};
+`)();
+
+  const { events, currentState, originalActivation, replacementActivation } = await api.run();
+
+  assert.deepStrictEqual(events.steps, [4, 2, 3, 4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepStrictEqual(events.invalidations, [
+    {
+      step: 2,
+      options: {
+        logLabel: '步骤 4 手机短信等待超时后准备回到步骤 2 复用当前手机号重试（第 1 次重开）',
+      },
+    },
+    {
+      step: 1,
+      options: {
+        logLabel: '步骤 4 检测到当前注册手机号无法接收短信后准备回到步骤 1 重新获取手机号重试（第 2 次重开）',
+      },
+    },
+  ]);
+  assert.deepStrictEqual(events.cancelCalls, [
+    {
+      stateActivation: originalActivation,
+      activation: originalActivation,
+    },
+  ]);
+  assert.deepStrictEqual(currentState.signupPhoneActivation, replacementActivation);
+  assert.equal(currentState.signupPhoneNumber, replacementActivation.phoneNumber);
+  assert.equal(currentState.accountIdentifierType, 'phone');
+  assert.equal(currentState.accountIdentifier, replacementActivation.phoneNumber);
+  assert.equal(currentState.password, 'Secret123!');
+  assert.equal(events.logs.some(({ message }) => /回到步骤 2 复用当前手机号/.test(message)), true);
+  assert.equal(events.logs.some(({ message }) => /丢弃当前注册手机号并回到步骤 1 重新开始/.test(message)), true);
+  assert.equal(events.logs.some(({ message }) => /第 2 次重开/.test(message)), true);
 });
 
 test('auto-run clears manual signup phone state when step 3 detects phone/password mismatch', async () => {

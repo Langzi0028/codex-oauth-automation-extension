@@ -91,6 +91,7 @@
     const MAX_PHONE_REUSABLE_POOL = 12;
     const PHONE_CODE_TIMEOUT_ERROR_PREFIX = 'PHONE_CODE_TIMEOUT::';
     const PHONE_STALE_SIGNUP_EMAIL_VERIFICATION_ERROR_CODE = 'PHONE_SIGNUP_STALE_EMAIL_VERIFICATION';
+    const PHONE_SIGNUP_RETRY_STEP2_ERROR_PREFIX = 'PHONE_SIGNUP_RETRY_STEP2::';
     const PHONE_RESTART_STEP7_ERROR_PREFIX = 'PHONE_RESTART_STEP7::';
     const PHONE_RESEND_THROTTLED_ERROR_PREFIX = 'PHONE_RESEND_THROTTLED::';
     const PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX = 'PHONE_RESEND_BANNED_NUMBER::';
@@ -1364,6 +1365,18 @@
         error?.stalePhoneSignupEmailVerification
         || error?.code === PHONE_STALE_SIGNUP_EMAIL_VERIFICATION_ERROR_CODE
       );
+    }
+
+    function buildSignupPhoneRetryStep2Error(activation = null) {
+      const normalizedActivation = normalizeActivation(activation);
+      const suffix = normalizedActivation?.phoneNumber ? ` 当前号码：${normalizedActivation.phoneNumber}。` : '';
+      return new Error(
+        `${PHONE_SIGNUP_RETRY_STEP2_ERROR_PREFIX}步骤 4：短信等待窗口超时，回到步骤 2 复用当前手机号。${suffix}`
+      );
+    }
+
+    function isSignupPhoneRetryStep2Error(error) {
+      return String(error?.message || error || '').trim().startsWith(PHONE_SIGNUP_RETRY_STEP2_ERROR_PREFIX);
     }
 
     function isPhoneResendThrottledError(error) {
@@ -5426,24 +5439,11 @@
                 await assertSignupPhoneStillApplicable('while waiting for SMS code');
               },
               onTimeoutWindow: async () => {
-                try {
-                  await resendSignupPhoneVerificationCode(tabId);
-                  await addLog('步骤 4：已点击注册手机验证码页面的“重新发送”。', 'info', {
-                    step: 4,
-                    stepKey: 'fetch-signup-code',
-                  });
-                } catch (resendError) {
-                  if (isStopRequestedError(resendError)) {
-                    throw resendError;
-                  }
-                  if (isPhoneResendServerError(resendError)) {
-                    throw buildPhoneResendServerError(resendError);
-                  }
-                  await addLog(`步骤 4：注册手机验证码页面重发失败，将继续轮询短信。${resendError.message}`, 'warn', {
-                    step: 4,
-                    stepKey: 'fetch-signup-code',
-                  });
-                }
+                await addLog('步骤 4：注册手机号短信等待窗口超时，将回到步骤 2 复用当前手机号重新提交。', 'warn', {
+                  step: 4,
+                  stepKey: 'fetch-signup-code',
+                });
+                throw buildSignupPhoneRetryStep2Error(activation);
               },
             });
 
@@ -5508,7 +5508,8 @@
 
           throw new Error('步骤 4：手机验证码未能成功提交。');
         } catch (error) {
-          if (shouldCancelActivation && activation) {
+          const shouldRetryStep2 = isSignupPhoneRetryStep2Error(error);
+          if (shouldCancelActivation && activation && !shouldRetryStep2) {
             await cancelSignupPhoneActivation(state, activation).catch(() => {});
           }
           await setPhoneRuntimeState({
@@ -6576,6 +6577,7 @@
       finalizeLoginPhoneActivationAfterSuccess,
       finalizeSignupPhoneActivationAfterSuccess,
       isPhoneResendBannedNumberError,
+      isSignupPhoneRetryStep2Error,
       normalizeActivation,
       pollPhoneActivationCode,
       prepareLoginPhoneActivation,

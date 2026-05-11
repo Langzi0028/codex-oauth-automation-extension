@@ -5714,8 +5714,10 @@ test('phone verification helper stops when add-phone recovery cannot be verified
   }
 });
 
-test('signup phone verification cancels activation when resend lands on contact-verification HTTP 500 page', async () => {
+test('signup phone verification timeout asks Auto to retry step 2 without page resend or activation cancel', async () => {
   const requests = [];
+  const contentMessages = [];
+  const statusActions = [];
   let currentState = {
     heroSmsApiKey: 'demo-key',
     heroSmsCountryId: 52,
@@ -5733,6 +5735,7 @@ test('signup phone verification cancels activation when resend lands on contact-
       countryLabel: 'Thailand',
     },
   };
+  const originalActivation = currentState.signupPhoneActivation;
 
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
@@ -5740,21 +5743,27 @@ test('signup phone verification cancels activation when resend lands on contact-
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      const id = parsedUrl.searchParams.get('id');
       if (action === 'getStatus') {
         return { ok: true, text: async () => 'STATUS_WAIT_CODE' };
       }
       if (action === 'setStatus') {
-        return { ok: true, text: async () => `STATUS_UPDATED:${id}` };
+        statusActions.push(parsedUrl.searchParams.get('status'));
+        return { ok: true, text: async () => 'ACCESS_READY' };
       }
       throw new Error(`Unexpected HeroSMS action: ${action}`);
     },
     getState: async () => ({ ...currentState }),
     sendToContentScriptResilient: async (_source, message) => {
+      contentMessages.push(message);
+      if (message.type === 'STEP8_GET_STATE') {
+        return {
+          emailVerificationPage: false,
+          phoneVerificationPage: true,
+          url: 'https://auth.openai.com/phone-verification',
+        };
+      }
       if (message.type === 'RESEND_VERIFICATION_CODE') {
-        throw new Error(
-          'PHONE_RESEND_SERVER_ERROR::This page isn\'t working auth.openai.com is currently unable to handle this request. HTTP ERROR 500'
-        );
+        return { success: true };
       }
       throw new Error(`Unexpected content-script message: ${message.type}`);
     },
@@ -5765,16 +5774,28 @@ test('signup phone verification cancels activation when resend lands on contact-
     throwIfStopped: () => {},
   });
 
-  await assert.rejects(
-    () => helpers.completeSignupPhoneVerificationFlow(1, { state: currentState }),
-    (error) => {
-      assert.match(error.message, /^PHONE_RESEND_SERVER_ERROR::This page isn't working/);
-      assert.equal(error.message.includes('PHONE_RESEND_SERVER_ERROR::PHONE_RESEND_SERVER_ERROR::'), false);
-      return true;
-    }
-  );
+  let caughtError = null;
+  try {
+    await helpers.completeSignupPhoneVerificationFlow(1, { state: currentState });
+  } catch (error) {
+    caughtError = error;
+  }
 
-  assert.equal(currentState.signupPhoneActivation, null);
+  assert.ok(caughtError, 'expected Step 4 timeout to signal Auto retry');
+  assert.match(caughtError.message, /^PHONE_SIGNUP_RETRY_STEP2::/);
+  assert.equal(helpers.isSignupPhoneRetryStep2Error(caughtError), true);
+  assert.equal(
+    contentMessages.some((message) => message.type === 'RESEND_VERIFICATION_CODE'),
+    false,
+    'recoverable signup timeout should not click the page resend button'
+  );
+  assert.deepStrictEqual(statusActions, ['3']);
+  assert.equal(currentState.signupPhoneActivation.activationId, originalActivation.activationId);
+  assert.equal(currentState.signupPhoneActivation.phoneNumber, originalActivation.phoneNumber);
+  assert.equal(currentState.signupPhoneNumber, '66953330001');
+  assert.equal(currentState.currentPhoneVerificationCode, '');
+  assert.equal(currentState.signupPhoneVerificationRequestedAt, null);
+  assert.equal(currentState.signupPhoneVerificationPurpose, '');
 });
 
 test('phone verification helper skips page resend for 5sim timeouts and rotates number directly', async () => {
