@@ -345,6 +345,7 @@ const selectLuckmailEmailType = document.getElementById('select-luckmail-email-t
 const inputLuckmailDomain = document.getElementById('input-luckmail-domain');
 const inputLuckmailEmailWaitSeconds = document.getElementById('input-luckmail-email-wait-seconds');
 const inputLuckmailCodePollIntervalSeconds = document.getElementById('input-luckmail-code-poll-interval-seconds');
+const inputLuckmailReusePurchasesEnabled = document.getElementById('input-luckmail-reuse-purchases-enabled');
 const btnLuckmailRefresh = document.getElementById('btn-luckmail-refresh');
 const btnLuckmailDisableUsed = document.getElementById('btn-luckmail-disable-used');
 const luckmailSummary = document.getElementById('luckmail-summary');
@@ -3428,6 +3429,9 @@ function collectSettingsPayload() {
       ? inputGpcHelperLocalSmsEnabled.checked
       : latestState?.gopayHelperLocalSmsHelperEnabled
   );
+  const luckmailReusePurchasesEnabledValue = typeof inputLuckmailReusePurchasesEnabled !== 'undefined' && inputLuckmailReusePurchasesEnabled
+    ? Boolean(inputLuckmailReusePurchasesEnabled.checked)
+    : latestState?.luckmailReusePurchasesEnabled !== false;
   const selectedSub2ApiGroupName = String(inputSub2ApiGroup.value || '').trim();
   const sub2apiGroupNames = [];
   const seenSub2ApiGroupNames = new Set();
@@ -3597,6 +3601,7 @@ function collectSettingsPayload() {
     luckmailDomain: inputLuckmailDomain.value.trim(),
     luckmailEmailWaitSeconds: luckmailEmailWaitSecondsValue,
     luckmailCodePollIntervalSeconds: luckmailCodePollIntervalSecondsValue,
+    luckmailReusePurchasesEnabled: luckmailReusePurchasesEnabledValue,
     cloudflareDomain: selectedCloudflareDomain,
     cloudflareDomains: domains,
     cloudflareTempEmailBaseUrl: normalizeCloudflareTempEmailBaseUrlValue(inputTempEmailBaseUrl.value),
@@ -8557,6 +8562,9 @@ function applySettingsState(state) {
       normalizeLuckmailCodePollIntervalSecondsValue(state?.luckmailCodePollIntervalSeconds, DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS)
     );
   }
+  if (typeof inputLuckmailReusePurchasesEnabled !== 'undefined' && inputLuckmailReusePurchasesEnabled) {
+    inputLuckmailReusePurchasesEnabled.checked = state?.luckmailReusePurchasesEnabled !== false;
+  }
   applyCloudflareTempEmailSettingsState(state);
   if (typeof applyCloudMailSettingsState === 'function') {
     applyCloudMailSettingsState(state);
@@ -11789,6 +11797,13 @@ selectLuckmailEmailType?.addEventListener('change', () => {
   saveSettings({ silent: true }).catch(() => { });
 });
 
+if (typeof inputLuckmailReusePurchasesEnabled !== 'undefined' && inputLuckmailReusePurchasesEnabled) {
+  inputLuckmailReusePurchasesEnabled.addEventListener('change', () => {
+    markSettingsDirty(true);
+    saveSettings({ silent: true }).catch(() => { });
+  });
+}
+
 inputPassword.addEventListener('input', () => {
   markSettingsDirty(true);
   updateButtonStates();
@@ -13917,6 +13932,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         inputLuckmailCodePollIntervalSeconds.value = String(
           normalizeLuckmailCodePollIntervalSecondsValue(message.payload.luckmailCodePollIntervalSeconds, DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS)
         );
+      }
+      if (message.payload.luckmailReusePurchasesEnabled !== undefined
+        && typeof inputLuckmailReusePurchasesEnabled !== 'undefined'
+        && inputLuckmailReusePurchasesEnabled) {
+        inputLuckmailReusePurchasesEnabled.checked = message.payload.luckmailReusePurchasesEnabled !== false;
       }
       if (message.payload.luckmailUsedPurchases !== undefined && isLuckmailProvider()) {
         queueLuckmailPurchaseRefresh();

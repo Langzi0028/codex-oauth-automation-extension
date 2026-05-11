@@ -264,6 +264,212 @@ return {
   assert.match(snapshot.activateCalls[0].options.logMessage, /已复用 openai 邮箱/);
 });
 
+test('ensureLuckmailPurchaseForFlow skips reusable lookup and buys new mailbox when LuckMail reuse is disabled', async () => {
+  const bundle = [
+    extractFunction('getLuckmailSessionConfig'),
+    extractFunction('getCurrentLuckmailPurchase'),
+    extractFunction('ensureLuckmailPurchaseForFlow'),
+  ].join('\n');
+
+  const factory = new Function('initialState', `
+let currentState = { ...initialState };
+const DEFAULT_LUCKMAIL_PROJECT_CODE = 'openai';
+const purchaseCalls = [];
+const activateCalls = [];
+let reusableLookupCount = 0;
+
+function normalizeLuckmailBaseUrl(value) {
+  return String(value || '').trim() || 'https://mails.luckyous.com';
+}
+function normalizeLuckmailEmailType(value) {
+  return ['self_built', 'ms_imap', 'ms_graph', 'google_variant'].includes(String(value || '').trim())
+    ? String(value || '').trim()
+    : 'ms_graph';
+}
+function normalizeLuckmailPurchase(value) {
+  return value;
+}
+function normalizeLuckmailPurchases(value) {
+  return value.purchases || [];
+}
+async function getState() {
+  return currentState;
+}
+function createLuckmailClient() {
+  return {
+    user: {
+      async purchaseEmails(projectCode, quantity, options) {
+        purchaseCalls.push({ projectCode, quantity, options });
+        return {
+          purchases: [{ id: 27, email_address: 'fresh@outlook.com', token: 'tok-fresh' }],
+        };
+      },
+    },
+  };
+}
+async function findReusableLuckmailPurchaseForFlow() {
+  reusableLookupCount += 1;
+  return {
+    id: 99,
+    email_address: 'reuse@outlook.com',
+    token: 'tok-reuse',
+  };
+}
+async function activateLuckmailPurchaseForFlow(state, client, purchase, options) {
+  activateCalls.push({ state, purchase, options });
+  currentState.currentLuckmailPurchase = purchase;
+  currentState.email = purchase.email_address;
+  return purchase;
+}
+
+${bundle}
+
+return {
+  ensureLuckmailPurchaseForFlow,
+  snapshot() {
+    return { currentState, purchaseCalls, activateCalls, reusableLookupCount };
+  },
+};
+`);
+
+  const api = factory({
+    luckmailApiKey: 'sk-test',
+    luckmailBaseUrl: 'https://mails.luckyous.com',
+    luckmailEmailType: 'ms_imap',
+    luckmailDomain: 'outlook.com',
+    luckmailReusePurchasesEnabled: false,
+    currentLuckmailPurchase: null,
+    email: null,
+  });
+
+  const purchase = await api.ensureLuckmailPurchaseForFlow();
+  const snapshot = api.snapshot();
+
+  assert.equal(purchase.id, 27);
+  assert.equal(snapshot.reusableLookupCount, 0);
+  assert.deepStrictEqual(snapshot.purchaseCalls, [{
+    projectCode: 'openai',
+    quantity: 1,
+    options: {
+      emailType: 'ms_imap',
+      domain: 'outlook.com',
+    },
+  }]);
+  assert.equal(snapshot.activateCalls[0].options.initializeCursor, false);
+  assert.match(snapshot.activateCalls[0].options.logMessage, /已购买邮箱/);
+  assert.equal(snapshot.currentState.email, 'fresh@outlook.com');
+});
+
+test('ensureLuckmailPurchaseForFlow ignores current runtime purchase and buys new mailbox when LuckMail reuse is disabled', async () => {
+  const bundle = [
+    extractFunction('getLuckmailSessionConfig'),
+    extractFunction('getCurrentLuckmailPurchase'),
+    extractFunction('ensureLuckmailPurchaseForFlow'),
+  ].join('\n');
+
+  const factory = new Function('initialState', `
+let currentState = { ...initialState };
+const DEFAULT_LUCKMAIL_PROJECT_CODE = 'openai';
+const purchaseCalls = [];
+const activateCalls = [];
+let reusableLookupCount = 0;
+
+function normalizeLuckmailBaseUrl(value) {
+  return String(value || '').trim() || 'https://mails.luckyous.com';
+}
+function normalizeLuckmailEmailType(value) {
+  return ['self_built', 'ms_imap', 'ms_graph', 'google_variant'].includes(String(value || '').trim())
+    ? String(value || '').trim()
+    : 'ms_graph';
+}
+function normalizeLuckmailPurchase(value) {
+  return value;
+}
+function normalizeLuckmailPurchases(value) {
+  return value.purchases || [];
+}
+async function getState() {
+  return currentState;
+}
+async function setEmailState(value) {
+  currentState.email = value;
+}
+function createLuckmailClient() {
+  return {
+    user: {
+      async purchaseEmails(projectCode, quantity, options) {
+        purchaseCalls.push({ projectCode, quantity, options });
+        return {
+          purchases: [{ id: 31, email_address: 'fresh-current@outlook.com', token: 'tok-fresh-current' }],
+        };
+      },
+    },
+  };
+}
+async function findReusableLuckmailPurchaseForFlow() {
+  reusableLookupCount += 1;
+  return null;
+}
+async function activateLuckmailPurchaseForFlow(state, client, purchase, options) {
+  activateCalls.push({ state, purchase, options });
+  currentState.currentLuckmailPurchase = purchase;
+  currentState.email = purchase.email_address;
+  return purchase;
+}
+
+${bundle}
+
+return {
+  ensureLuckmailPurchaseForFlow,
+  snapshot() {
+    return { currentState, purchaseCalls, activateCalls, reusableLookupCount };
+  },
+};
+`);
+
+  const api = factory({
+    luckmailApiKey: 'sk-test',
+    luckmailBaseUrl: 'https://mails.luckyous.com',
+    luckmailEmailType: 'ms_graph',
+    luckmailDomain: '',
+    luckmailReusePurchasesEnabled: false,
+    currentLuckmailPurchase: {
+      id: 12,
+      email_address: 'current@outlook.com',
+      token: 'tok-current',
+    },
+    email: 'current@outlook.com',
+  });
+
+  const purchase = await api.ensureLuckmailPurchaseForFlow();
+  const snapshot = api.snapshot();
+
+  assert.equal(purchase.id, 31);
+  assert.equal(snapshot.reusableLookupCount, 0);
+  assert.deepStrictEqual(snapshot.purchaseCalls, [{
+    projectCode: 'openai',
+    quantity: 1,
+    options: {
+      emailType: 'ms_graph',
+      domain: undefined,
+    },
+  }]);
+  assert.equal(snapshot.activateCalls[0].options.initializeCursor, false);
+  assert.equal(snapshot.currentState.currentLuckmailPurchase.id, 31);
+  assert.equal(snapshot.currentState.email, 'fresh-current@outlook.com');
+});
+
+test('PERSISTED_SETTING_DEFAULTS enables LuckMail purchase reuse by default', () => {
+  const defaultsStart = source.indexOf('const PERSISTED_SETTING_DEFAULTS = {');
+  assert.notEqual(defaultsStart, -1);
+
+  const defaultsEnd = source.indexOf('};', defaultsStart);
+  assert.notEqual(defaultsEnd, -1);
+
+  const defaultsSource = source.slice(defaultsStart, defaultsEnd);
+  assert.match(defaultsSource, /luckmailReusePurchasesEnabled:\s*true/);
+});
+
 test('activateLuckmailPurchaseForFlow builds baseline cursor from existing mails when reusing mailbox', async () => {
   const bundle = extractFunction('activateLuckmailPurchaseForFlow');
 
@@ -747,6 +953,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   luckmailDomain: '',
   luckmailEmailWaitSeconds: DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS,
   luckmailCodePollIntervalSeconds: DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS,
+  luckmailReusePurchasesEnabled: true,
   luckmailUsedPurchases: {},
   luckmailPreserveTagId: 0,
   luckmailPreserveTagName: '保留',
@@ -779,9 +986,9 @@ function resolveLegacyAutoStepDelaySeconds() {
 
 ${bundle}
 
-return {
-  buildPersistentSettingsPayload,
-};
+  return {
+    buildPersistentSettingsPayload,
+  };
 `);
 
   const api = factory();
@@ -816,6 +1023,15 @@ return {
   }), {
     luckmailCodePollIntervalSeconds: 5,
   });
+
+  assert.deepStrictEqual(api.buildPersistentSettingsPayload({
+    luckmailReusePurchasesEnabled: 0,
+  }), {
+    luckmailReusePurchasesEnabled: false,
+  });
+
+  const defaultPayload = api.buildPersistentSettingsPayload({}, { fillDefaults: true });
+  assert.equal(defaultPayload.luckmailReusePurchasesEnabled, true);
 
   const statePayload = api.buildPersistentSettingsPayload({
     luckmailUsedPurchases: { 88: true, 99: false, bad: true },

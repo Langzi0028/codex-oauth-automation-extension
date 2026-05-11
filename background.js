@@ -732,6 +732,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   luckmailDomain: '',
   luckmailEmailWaitSeconds: DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS,
   luckmailCodePollIntervalSeconds: DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS,
+  luckmailReusePurchasesEnabled: true,
   luckmailUsedPurchases: {},
   luckmailPreserveTagId: 0,
   luckmailPreserveTagName: DEFAULT_LUCKMAIL_PRESERVE_TAG_NAME,
@@ -872,6 +873,7 @@ const DEFAULT_STATE = {
   luckmailBaseUrl: DEFAULT_LUCKMAIL_BASE_URL,
   luckmailEmailType: DEFAULT_LUCKMAIL_EMAIL_TYPE,
   luckmailDomain: '',
+  luckmailReusePurchasesEnabled: true,
   luckmailUsedPurchases: {},
   luckmailPreserveTagId: 0,
   luckmailPreserveTagName: DEFAULT_LUCKMAIL_PRESERVE_TAG_NAME,
@@ -2563,6 +2565,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeLuckmailEmailWaitSeconds(value, DEFAULT_LUCKMAIL_EMAIL_WAIT_SECONDS);
     case 'luckmailCodePollIntervalSeconds':
       return normalizeLuckmailCodePollIntervalSeconds(value, DEFAULT_LUCKMAIL_CODE_POLL_INTERVAL_SECONDS);
+    case 'luckmailReusePurchasesEnabled':
+      return Boolean(value);
     case 'luckmailUsedPurchases':
       return normalizeLuckmailUsedPurchases(value);
     case 'luckmailPreserveTagId':
@@ -5187,8 +5191,9 @@ async function disableUsedLuckmailPurchases() {
 async function ensureLuckmailPurchaseForFlow(options = {}) {
   const { allowReuse = true } = options;
   const state = await getState();
+  const effectiveAllowReuse = allowReuse && state.luckmailReusePurchasesEnabled !== false;
   const existingPurchase = getCurrentLuckmailPurchase(state);
-  if (allowReuse && existingPurchase?.email_address && existingPurchase?.token) {
+  if (effectiveAllowReuse && existingPurchase?.email_address && existingPurchase?.token) {
     if (state.email !== existingPurchase.email_address) {
       await setEmailState(existingPurchase.email_address);
     }
@@ -5197,7 +5202,7 @@ async function ensureLuckmailPurchaseForFlow(options = {}) {
 
   const config = getLuckmailSessionConfig(state);
   const client = createLuckmailClient(state);
-  if (allowReuse) {
+  if (effectiveAllowReuse) {
     const reusablePurchase = await findReusableLuckmailPurchaseForFlow(state, client);
     if (reusablePurchase) {
       return activateLuckmailPurchaseForFlow(state, client, reusablePurchase, {

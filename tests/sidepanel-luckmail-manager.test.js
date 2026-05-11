@@ -88,6 +88,22 @@ test('sidepanel html exposes compact LuckMail actual code polling interval setti
   assert.match(html, /id="input-luckmail-code-poll-interval-seconds"[\s\S]*<span class="data-unit">秒<\/span>/);
 });
 
+test('sidepanel html exposes compact LuckMail reuse purchases toggle', () => {
+  const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
+  const intervalInputIndex = html.indexOf('id="input-luckmail-code-poll-interval-seconds"');
+  const reuseToggleIndex = html.indexOf('id="input-luckmail-reuse-purchases-enabled"');
+  const projectIndex = html.indexOf('<span class="data-label">项目</span>');
+
+  assert.notEqual(reuseToggleIndex, -1);
+  assert.ok(reuseToggleIndex > intervalInputIndex, 'reuse toggle should sit after compact LuckMail polling settings');
+  assert.ok(reuseToggleIndex < projectIndex, 'reuse toggle should stay before the LuckMail project/list area');
+  assert.match(html, /<span class="data-label">复用已购<\/span>/);
+  assert.match(html, /<label class="toggle-switch" for="input-luckmail-reuse-purchases-enabled"/);
+  assert.match(html, /<input type="checkbox" id="input-luckmail-reuse-purchases-enabled" checked \/>/);
+  assert.match(html, /id="input-luckmail-reuse-purchases-enabled"[\s\S]*<span class="data-value">启用<\/span>/);
+  assert.match(html, /关闭后每次直接购买新邮箱，适合多 profile 并发。/);
+});
+
 test('sidepanel source normalizes LuckMail email wait seconds to bounded seconds', () => {
   const api = new Function(`
 const LUCKMAIL_EMAIL_WAIT_SECONDS_MIN = 15;
@@ -146,6 +162,15 @@ test('sidepanel source persists restores and live-updates LuckMail code polling 
   assert.match(sidepanelSource, /message\.payload\.luckmailCodePollIntervalSeconds !== undefined[\s\S]*inputLuckmailCodePollIntervalSeconds\.value = String\(/);
   assert.match(sidepanelSource, /typeof inputLuckmailCodePollIntervalSeconds !== 'undefined'[\s\S]*inputLuckmailCodePollIntervalSeconds\.addEventListener\('input'[\s\S]*markSettingsDirty\(true\);[\s\S]*scheduleSettingsAutoSave\(\);/);
   assert.match(sidepanelSource, /typeof inputLuckmailCodePollIntervalSeconds !== 'undefined'[\s\S]*inputLuckmailCodePollIntervalSeconds\.addEventListener\('blur'[\s\S]*normalizeLuckmailCodePollIntervalSecondsValue\(inputLuckmailCodePollIntervalSeconds\.value/);
+});
+
+test('sidepanel source persists restores live-updates and saves LuckMail reuse purchases toggle', () => {
+  assert.match(sidepanelSource, /const inputLuckmailReusePurchasesEnabled = document\.getElementById\('input-luckmail-reuse-purchases-enabled'\);/);
+  assert.match(sidepanelSource, /const luckmailReusePurchasesEnabledValue = typeof inputLuckmailReusePurchasesEnabled !== 'undefined'[\s\S]*latestState\?\.luckmailReusePurchasesEnabled !== false;/);
+  assert.match(sidepanelSource, /luckmailReusePurchasesEnabled: luckmailReusePurchasesEnabledValue,/);
+  assert.match(sidepanelSource, /typeof inputLuckmailReusePurchasesEnabled !== 'undefined'[\s\S]*inputLuckmailReusePurchasesEnabled\.checked = state\?\.luckmailReusePurchasesEnabled !== false;/);
+  assert.match(sidepanelSource, /message\.payload\.luckmailReusePurchasesEnabled !== undefined[\s\S]*typeof inputLuckmailReusePurchasesEnabled !== 'undefined'[\s\S]*inputLuckmailReusePurchasesEnabled\.checked = message\.payload\.luckmailReusePurchasesEnabled !== false;/);
+  assert.match(sidepanelSource, /typeof inputLuckmailReusePurchasesEnabled !== 'undefined'[\s\S]*inputLuckmailReusePurchasesEnabled\.addEventListener\('change', \(\) => \{[\s\S]*markSettingsDirty\(true\);[\s\S]*saveSettings\(\{ silent: true \}\)\.catch\(\(\) => \{ \}\);[\s\S]*\}\);/);
 });
 
 test('luckmail manager exposes a factory and renders empty state', () => {
