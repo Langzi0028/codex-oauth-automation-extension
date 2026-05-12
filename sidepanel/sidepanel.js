@@ -3784,9 +3784,6 @@ function normalizeAccountRunHistoryHelperBaseUrlValue(value = '') {
 
 
 function normalizePhoneSmsProvider(value = '') {
-  if (typeof window !== 'undefined' && window.PhoneSmsProviderRegistry?.normalizeProviderId) {
-    return window.PhoneSmsProviderRegistry.normalizeProviderId(value);
-  }
   const heroProvider = typeof PHONE_SMS_PROVIDER_HERO_SMS !== 'undefined'
     ? PHONE_SMS_PROVIDER_HERO_SMS
     : 'hero-sms';
@@ -3800,6 +3797,9 @@ function normalizePhoneSmsProvider(value = '') {
     ? PHONE_SMS_PROVIDER_SMSBOWER
     : 'smsbower';
   const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === heroProvider) {
+    return heroProvider;
+  }
   if (normalized === fiveSimProvider) {
     return fiveSimProvider;
   }
@@ -3808,6 +3808,9 @@ function normalizePhoneSmsProvider(value = '') {
   }
   if (normalized === smsBowerProvider) {
     return smsBowerProvider;
+  }
+  if (typeof window !== 'undefined' && window.PhoneSmsProviderRegistry?.normalizeProviderId) {
+    return window.PhoneSmsProviderRegistry.normalizeProviderId(value);
   }
   return heroProvider;
 }
@@ -4043,6 +4046,11 @@ function normalizePhoneSmsProviderValue(value = '') {
 }
 
 function normalizePhoneSmsProviderOrderValue(value = [], fallbackOrder = []) {
+  const orderLimit = typeof DEFAULT_PHONE_SMS_PROVIDER_ORDER !== 'undefined'
+    && Array.isArray(DEFAULT_PHONE_SMS_PROVIDER_ORDER)
+    && DEFAULT_PHONE_SMS_PROVIDER_ORDER.length
+    ? DEFAULT_PHONE_SMS_PROVIDER_ORDER.length
+    : 4;
   const source = Array.isArray(value)
     ? value
     : String(value || '')
@@ -4062,7 +4070,7 @@ function normalizePhoneSmsProviderOrderValue(value = [], fallbackOrder = []) {
   });
 
   if (normalized.length) {
-    return normalized.slice(0, 3);
+    return normalized.slice(0, orderLimit);
   }
 
   const fallback = Array.isArray(fallbackOrder) ? fallbackOrder : [];
@@ -4077,7 +4085,7 @@ function normalizePhoneSmsProviderOrderValue(value = [], fallbackOrder = []) {
     }
     fallbackNormalized.push(provider);
   });
-  return fallbackNormalized.slice(0, 3);
+  return fallbackNormalized.slice(0, orderLimit);
 }
 
 function formatPhoneSmsProviderOrderSummary(order = []) {
@@ -4092,13 +4100,18 @@ function formatPhoneSmsProviderOrderSummary(order = []) {
 
 function updatePhoneSmsProviderOrderSummary(order = []) {
   const normalized = normalizePhoneSmsProviderOrderValue(order, []);
+  const orderLimit = typeof DEFAULT_PHONE_SMS_PROVIDER_ORDER !== 'undefined'
+    && Array.isArray(DEFAULT_PHONE_SMS_PROVIDER_ORDER)
+    && DEFAULT_PHONE_SMS_PROVIDER_ORDER.length
+    ? DEFAULT_PHONE_SMS_PROVIDER_ORDER.length
+    : 4;
   if (displayPhoneSmsProviderOrder) {
     displayPhoneSmsProviderOrder.textContent = formatPhoneSmsProviderOrderSummary(normalized);
   }
   if (btnPhoneSmsProviderOrderMenu) {
     btnPhoneSmsProviderOrderMenu.textContent = normalized.length
-      ? `${normalized.map((provider) => getPhoneSmsProviderLabel(provider)).join(' / ')} (${normalized.length}/3)`
-      : `未选择 (0/3)`;
+      ? `${normalized.map((provider) => getPhoneSmsProviderLabel(provider)).join(' / ')} (${normalized.length}/${orderLimit})`
+      : `未选择 (0/${orderLimit})`;
   }
 }
 
@@ -4170,7 +4183,12 @@ function renderPhoneSmsProviderOrderMenu() {
 }
 
 function syncPhoneSmsProviderOrderFromSelect(options = {}) {
-  const selectionLimit = Math.max(1, Math.floor(Number(options.maxSelection) || 3));
+  const defaultSelectionLimit = typeof DEFAULT_PHONE_SMS_PROVIDER_ORDER !== 'undefined'
+    && Array.isArray(DEFAULT_PHONE_SMS_PROVIDER_ORDER)
+    && DEFAULT_PHONE_SMS_PROVIDER_ORDER.length
+    ? DEFAULT_PHONE_SMS_PROVIDER_ORDER.length
+    : 4;
+  const selectionLimit = Math.max(1, Math.floor(Number(options.maxSelection) || defaultSelectionLimit));
   const enforceMax = options.enforceMax !== false;
   const ensureDefault = options.ensureDefault !== false;
   const syncProvider = Boolean(options.syncProvider);
@@ -5676,7 +5694,11 @@ function normalizePhoneActivationState(record = {}) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
     return null;
   }
-  const provider = normalizePhoneSmsProviderValue(record.provider || latestState?.phoneSmsProvider || PHONE_SMS_PROVIDER_HERO);
+  const fiveSimProvider = typeof PHONE_SMS_PROVIDER_FIVE_SIM !== 'undefined' ? PHONE_SMS_PROVIDER_FIVE_SIM : '5sim';
+  const nexSmsProvider = typeof PHONE_SMS_PROVIDER_NEXSMS !== 'undefined' ? PHONE_SMS_PROVIDER_NEXSMS : 'nexsms';
+  const smsBowerProvider = typeof PHONE_SMS_PROVIDER_SMSBOWER !== 'undefined' ? PHONE_SMS_PROVIDER_SMSBOWER : 'smsbower';
+  const heroProvider = typeof PHONE_SMS_PROVIDER_HERO !== 'undefined' ? PHONE_SMS_PROVIDER_HERO : 'hero-sms';
+  const provider = normalizePhoneSmsProviderValue(record.provider || latestState?.phoneSmsProvider || heroProvider);
   const activationId = String(record.activationId ?? record.id ?? record.activation ?? '').trim();
   const phoneNumber = String(record.phoneNumber ?? record.phone ?? record.number ?? '').trim();
   if (!activationId || !phoneNumber) {
@@ -5691,13 +5713,15 @@ function normalizePhoneActivationState(record = {}) {
     maxUses: Math.max(1, Math.floor(Number(record.maxUses) || 3)),
   };
 
-  if (provider === PHONE_SMS_PROVIDER_FIVE_SIM) {
+  if (provider === fiveSimProvider) {
     normalized.countryId = normalizeFiveSimCountryCode(
       record.countryCode || record.countryId || '',
       ''
     );
-  } else if (provider === PHONE_SMS_PROVIDER_NEXSMS) {
+  } else if (provider === nexSmsProvider) {
     normalized.countryId = normalizeNexSmsCountryId(record.countryId, -1);
+  } else if (provider === smsBowerProvider) {
+    normalized.countryId = normalizeSmsBowerCountryIdValue(record.countryId, -1);
   } else {
     normalized.countryId = normalizeHeroSmsCountryId(record.countryId, 0);
   }
@@ -5733,11 +5757,18 @@ function resolvePhoneActivationCountryLabel(activation = null) {
   if (normalized.countryLabel) {
     return normalized.countryLabel;
   }
-  if (normalized.provider === PHONE_SMS_PROVIDER_FIVE_SIM) {
+  const fiveSimProvider = typeof PHONE_SMS_PROVIDER_FIVE_SIM !== 'undefined' ? PHONE_SMS_PROVIDER_FIVE_SIM : '5sim';
+  const nexSmsProvider = typeof PHONE_SMS_PROVIDER_NEXSMS !== 'undefined' ? PHONE_SMS_PROVIDER_NEXSMS : 'nexsms';
+  const smsBowerProvider = typeof PHONE_SMS_PROVIDER_SMSBOWER !== 'undefined' ? PHONE_SMS_PROVIDER_SMSBOWER : 'smsbower';
+  if (normalized.provider === fiveSimProvider) {
     return String(normalized.countryId || '').trim();
   }
-  if (normalized.provider === PHONE_SMS_PROVIDER_NEXSMS) {
+  if (normalized.provider === nexSmsProvider) {
     const countryId = normalizeNexSmsCountryId(normalized.countryId, -1);
+    return countryId >= 0 ? `Country #${countryId}` : '';
+  }
+  if (normalized.provider === smsBowerProvider) {
+    const countryId = normalizeSmsBowerCountryIdValue(normalized.countryId, -1);
     return countryId >= 0 ? `Country #${countryId}` : '';
   }
   return normalizeHeroSmsCountryLabel(
@@ -5747,11 +5778,17 @@ function resolvePhoneActivationCountryLabel(activation = null) {
 
 function getPhoneSmsProviderLabel(provider = '') {
   const normalized = normalizePhoneSmsProviderValue(provider);
-  if (normalized === PHONE_SMS_PROVIDER_FIVE_SIM) {
+  const fiveSimProvider = typeof PHONE_SMS_PROVIDER_FIVE_SIM !== 'undefined' ? PHONE_SMS_PROVIDER_FIVE_SIM : '5sim';
+  const nexSmsProvider = typeof PHONE_SMS_PROVIDER_NEXSMS !== 'undefined' ? PHONE_SMS_PROVIDER_NEXSMS : 'nexsms';
+  const smsBowerProvider = typeof PHONE_SMS_PROVIDER_SMSBOWER !== 'undefined' ? PHONE_SMS_PROVIDER_SMSBOWER : 'smsbower';
+  if (normalized === fiveSimProvider) {
     return '5sim';
   }
-  if (normalized === PHONE_SMS_PROVIDER_NEXSMS) {
+  if (normalized === nexSmsProvider) {
     return 'NexSMS';
+  }
+  if (normalized === smsBowerProvider) {
+    return 'SMSBower';
   }
   return 'HeroSMS';
 }

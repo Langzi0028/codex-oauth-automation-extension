@@ -52,6 +52,50 @@ function extractFunction(name) {
   return sidepanelSource.slice(start, end);
 }
 
+function extractLastFunction(name) {
+  const markers = [`async function ${name}(`, `function ${name}(`];
+  const start = markers
+    .map((marker) => sidepanelSource.lastIndexOf(marker))
+    .reduce((max, index) => Math.max(max, index), -1);
+  if (start < 0) {
+    throw new Error(`missing function ${name}`);
+  }
+
+  let parenDepth = 0;
+  let signatureEnded = false;
+  let braceStart = -1;
+  for (let i = start; i < sidepanelSource.length; i += 1) {
+    const ch = sidepanelSource[i];
+    if (ch === '(') {
+      parenDepth += 1;
+    } else if (ch === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) {
+        signatureEnded = true;
+      }
+    } else if (ch === '{' && signatureEnded) {
+      braceStart = i;
+      break;
+    }
+  }
+
+  let depth = 0;
+  let end = braceStart;
+  for (; end < sidepanelSource.length; end += 1) {
+    const ch = sidepanelSource[end];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end += 1;
+        break;
+      }
+    }
+  }
+
+  return sidepanelSource.slice(start, end);
+}
+
 test('sidepanel html exposes phone verification toggle and multi-provider SMS rows', () => {
   const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
 
@@ -395,6 +439,69 @@ return { formatPhoneSmsProviderOrderSummary };
     api.formatPhoneSmsProviderOrderSummary(['smsbower', 'nexsms']),
     '1. SMSBower → 2. NexSMS'
   );
+});
+
+test('provider order summary keeps all four providers and runtime SMSBower label', () => {
+  const api = new Function(`
+const window = {};
+const PHONE_SMS_PROVIDER_HERO = 'hero-sms';
+const PHONE_SMS_PROVIDER_HERO_SMS = PHONE_SMS_PROVIDER_HERO;
+const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
+const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
+const DEFAULT_PHONE_SMS_PROVIDER_ORDER = Object.freeze([
+  PHONE_SMS_PROVIDER_HERO,
+  PHONE_SMS_PROVIDER_FIVE_SIM,
+  PHONE_SMS_PROVIDER_NEXSMS,
+  PHONE_SMS_PROVIDER_SMSBOWER,
+]);
+const displayPhoneSmsProviderOrder = { textContent: '' };
+const btnPhoneSmsProviderOrderMenu = { textContent: '' };
+${extractFunction('normalizePhoneSmsProvider')}
+${extractFunction('normalizePhoneSmsProviderValue')}
+${extractFunction('normalizePhoneSmsProviderOrderValue')}
+${extractLastFunction('getPhoneSmsProviderLabel')}
+${extractFunction('formatPhoneSmsProviderOrderSummary')}
+${extractFunction('updatePhoneSmsProviderOrderSummary')}
+return {
+  normalizePhoneSmsProviderOrderValue,
+  formatPhoneSmsProviderOrderSummary,
+  updatePhoneSmsProviderOrderSummary,
+  getButtonText: () => btnPhoneSmsProviderOrderMenu.textContent,
+};
+`)();
+
+  const fullOrder = ['hero-sms', '5sim', 'nexsms', 'smsbower'];
+  assert.deepStrictEqual(api.normalizePhoneSmsProviderOrderValue(fullOrder, []), fullOrder);
+  assert.equal(
+    api.formatPhoneSmsProviderOrderSummary(fullOrder),
+    '1. HeroSMS → 2. 5sim → 3. NexSMS → 4. SMSBower'
+  );
+
+  api.updatePhoneSmsProviderOrderSummary(['smsbower']);
+  assert.equal(api.getButtonText(), 'SMSBower (1/4)');
+});
+
+test('provider normalization keeps local SMSBower value when registry is stale', () => {
+  const api = new Function(`
+const window = {
+  PhoneSmsProviderRegistry: {
+    normalizeProviderId(value) {
+      return String(value || '').trim().toLowerCase() === '5sim' ? '5sim' : 'hero-sms';
+    },
+  },
+};
+const PHONE_SMS_PROVIDER_HERO = 'hero-sms';
+const PHONE_SMS_PROVIDER_HERO_SMS = PHONE_SMS_PROVIDER_HERO;
+const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
+const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
+${extractFunction('normalizePhoneSmsProvider')}
+return { normalizePhoneSmsProvider };
+`)();
+
+  assert.equal(api.normalizePhoneSmsProvider('smsbower'), 'smsbower');
+  assert.equal(api.normalizePhoneSmsProvider('nexsms'), 'nexsms');
 });
 
 test('sidepanel source wires free reusable phone save and clear actions to runtime messages', () => {
