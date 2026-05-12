@@ -4,6 +4,15 @@ const fs = require('node:fs');
 
 const source = fs.readFileSync('background.js', 'utf8');
 
+test('background loads SMSBower provider before phone SMS registry', () => {
+  const smsBowerIndex = source.indexOf("'phone-sms/providers/smsbower.js'");
+  const registryIndex = source.indexOf("'phone-sms/providers/registry.js'");
+
+  assert.notEqual(smsBowerIndex, -1);
+  assert.notEqual(registryIndex, -1);
+  assert.ok(smsBowerIndex < registryIndex);
+});
+
 function extractFunction(name) {
   const markers = [`async function ${name}(`, `function ${name}(`];
   const start = markers
@@ -64,6 +73,10 @@ test('background account history settings are normalized independently from hotm
     extractFunction('normalizeNexSmsCountryId'),
     extractFunction('normalizeNexSmsCountryOrder'),
     extractFunction('normalizeNexSmsServiceCode'),
+    extractFunction('normalizeSmsBowerServiceCode'),
+    extractFunction('normalizeSmsBowerCountryId'),
+    extractFunction('normalizeSmsBowerCountryOrder'),
+    extractFunction('normalizeSmsBowerMaxPrice'),
     extractFunction('normalizePhonePreferredActivation'),
     extractFunction('normalizePhoneVerificationReplacementLimit'),
     extractFunction('normalizePhoneCodeWaitSeconds'),
@@ -115,7 +128,8 @@ const HERO_SMS_COUNTRY_LABEL = 'Thailand';
 const PHONE_SMS_PROVIDER_HERO_SMS = 'hero-sms';
 const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
 const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
-const DEFAULT_PHONE_SMS_PROVIDER_ORDER = ['hero-sms', '5sim', 'nexsms'];
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
+const DEFAULT_PHONE_SMS_PROVIDER_ORDER = ['hero-sms', '5sim', 'nexsms', 'smsbower'];
 const DEFAULT_PHONE_SMS_PROVIDER = PHONE_SMS_PROVIDER_HERO_SMS;
 const SIGNUP_METHOD_EMAIL = 'email';
 const SIGNUP_METHOD_PHONE = 'phone';
@@ -125,6 +139,8 @@ const PLUS_PAYMENT_METHOD_GOPAY = 'gopay';
 const PLUS_PAYMENT_METHOD_GPC_HELPER = 'gpc-helper';
 const DEFAULT_FIVE_SIM_PRODUCT = 'openai';
 const DEFAULT_NEX_SMS_SERVICE_CODE = 'ot';
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+const DEFAULT_SMS_BOWER_COUNTRY_ORDER = [];
 const FIVE_SIM_COUNTRY_ID = 'vietnam';
 const FIVE_SIM_COUNTRY_LABEL = '越南 (Vietnam)';
 const FIVE_SIM_OPERATOR = 'any';
@@ -241,8 +257,9 @@ return {
   assert.equal(api.normalizePersistentSettingValue('signupMethod', 'unknown'), 'email');
   assert.equal(api.normalizePersistentSettingValue('phoneSmsProvider', '5SIM'), '5sim');
   assert.equal(api.normalizePersistentSettingValue('phoneSmsProvider', 'NEXSMS'), 'nexsms');
+  assert.equal(api.normalizePersistentSettingValue('phoneSmsProvider', 'SMSBOWER'), 'smsbower');
   assert.equal(api.normalizePersistentSettingValue('phoneSmsProvider', 'unknown'), 'hero-sms');
-  assert.deepStrictEqual(api.normalizePersistentSettingValue('phoneSmsProviderOrder', ['nexsms', '5sim', 'nexsms']), ['nexsms', '5sim']);
+  assert.deepStrictEqual(api.normalizePersistentSettingValue('phoneSmsProviderOrder', ['smsbower', 'nexsms', '5sim', 'smsbower']), ['smsbower', 'nexsms', '5sim']);
   assert.equal(api.normalizePersistentSettingValue('fiveSimApiKey', ' demo-five '), ' demo-five ');
   assert.equal(api.normalizePersistentSettingValue('fiveSimProduct', ' OpenAI! '), 'openai');
   assert.equal(api.normalizePersistentSettingValue('fiveSimCountryId', ' England! '), 'england');
@@ -317,6 +334,15 @@ return {
     [1, 6]
   );
   assert.equal(api.normalizePersistentSettingValue('nexSmsServiceCode', ' OT! '), 'ot');
+  assert.equal(api.normalizePersistentSettingValue('smsBowerApiKey', ' demo-bower '), ' demo-bower ');
+  assert.equal(api.normalizePersistentSettingValue('smsBowerServiceCode', ' OpenAI! '), 'openai');
+  assert.equal(api.normalizePersistentSettingValue('smsBowerServiceCode', ''), '');
+  assert.equal(api.normalizePersistentSettingValue('smsBowerMaxPrice', '0.123456'), '0.1235');
+  assert.equal(api.normalizePersistentSettingValue('smsBowerMaxPrice', '0'), '');
+  assert.deepStrictEqual(
+    api.normalizePersistentSettingValue('smsBowerCountryOrder', [0, '6', 0]),
+    [0, 6]
+  );
   assert.deepStrictEqual(
     api.normalizePersistentSettingValue('phonePreferredActivation', {
       provider: 'nexsms',

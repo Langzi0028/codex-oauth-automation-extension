@@ -1342,20 +1342,22 @@
                 <option value="hero-sms">HeroSMS</option>
                 <option value="5sim">5sim</option>
                 <option value="nexsms">NexSMS</option>
+                <option value="smsbower">SMSBower</option>
               </select>
             </div>
             <div class="data-row" id="row-phone-sms-provider-order" style="display:none;">
               <span class="data-label">服务商顺序</span>
               <div class="data-inline hero-sms-country-stack">
-                <select id="select-phone-sms-provider-order" class="data-input mono" multiple size="3" style="display:none;">
+                <select id="select-phone-sms-provider-order" class="data-input mono" multiple size="4" style="display:none;">
                   <option value="hero-sms" selected>HeroSMS</option>
                   <option value="5sim" selected>5sim</option>
                   <option value="nexsms" selected>NexSMS</option>
+                  <option value="smsbower" selected>SMSBower</option>
                 </select>
                 <div class="hero-sms-country-mainline">
                   <div id="phone-sms-provider-order-menu-shell" class="hero-sms-country-menu">
                     <button id="btn-phone-sms-provider-order-menu" class="btn btn-outline btn-sm hero-sms-country-menu-btn" type="button" aria-haspopup="listbox" aria-expanded="false">
-                      HeroSMS / 5sim / NexSMS (3/3)
+                      HeroSMS / 5sim / NexSMS / SMSBower (4/4)
                     </button>
                     <div id="phone-sms-provider-order-menu" class="hero-sms-country-menu-dropdown" role="listbox" aria-multiselectable="true" hidden></div>
                   </div>
@@ -1497,6 +1499,45 @@
             <div class="data-row" id="row-nex-sms-service-code" style="display:none;">
               <span class="data-label">服务代码</span>
               <input type="text" id="input-nex-sms-service-code" class="data-input mono"
+                placeholder="ot" />
+            </div>
+            <div class="data-row" id="row-sms-bower-api-key" style="display:none;">
+              <span class="data-label">SMSBower API</span>
+              <div class="input-with-icon">
+                <input type="password" id="input-sms-bower-api-key" class="data-input data-input-with-icon mono"
+                  placeholder="请输入 SMSBower API Key" />
+                <button id="btn-toggle-sms-bower-api-key" class="input-icon-btn" type="button"
+                  data-password-toggle="input-sms-bower-api-key" data-show-label="显示 SMSBower API Key"
+                  data-hide-label="隐藏 SMSBower API Key" aria-label="显示 SMSBower API Key" title="显示 SMSBower API Key"></button>
+              </div>
+            </div>
+            <div class="data-row" id="row-sms-bower-country" style="display:none;">
+              <span class="data-label">国家优先级</span>
+              <div class="data-inline hero-sms-country-stack">
+                <select id="select-sms-bower-country" class="data-input mono" multiple size="6" style="display:none;">
+                  <option value="1" selected>Country #1</option>
+                </select>
+                <div class="hero-sms-country-mainline">
+                  <div id="sms-bower-country-menu-shell" class="hero-sms-country-menu">
+                    <button id="btn-sms-bower-country-menu" class="btn btn-outline btn-sm hero-sms-country-menu-btn" type="button" aria-haspopup="listbox" aria-expanded="false">
+                      Country #1 (1/3)
+                    </button>
+                    <div id="sms-bower-country-menu" class="hero-sms-country-menu-dropdown" role="listbox" aria-multiselectable="true" hidden></div>
+                  </div>
+                </div>
+                <span class="data-value hero-sms-country-note">多选最多 3 个，按点击顺序生效。</span>
+              </div>
+            </div>
+            <div class="data-row" id="row-sms-bower-country-fallback" style="display:none;">
+              <span class="data-label">生效顺序</span>
+              <div class="data-inline data-value-actions">
+                <span id="display-sms-bower-country-fallback-order" class="data-value data-value-fill mono country-order-list">未设置</span>
+                <button id="btn-sms-bower-country-clear" class="btn btn-ghost btn-xs data-inline-btn" type="button">清空</button>
+              </div>
+            </div>
+            <div class="data-row" id="row-sms-bower-service-code" style="display:none;">
+              <span class="data-label">服务代码</span>
+              <input type="text" id="input-sms-bower-service-code" class="data-input mono"
                 placeholder="ot" />
             </div>
             <div class="data-row" id="row-hero-sms-max-price" style="display:none;">
@@ -1771,6 +1812,7 @@
   <script src="../gopay-utils.js"></script>
   <script src="../phone-sms/providers/hero-sms.js"></script>
   <script src="../phone-sms/providers/five-sim.js"></script>
+  <script src="../phone-sms/providers/smsbower.js"></script>
   <script src="../phone-sms/providers/registry.js"></script>
   <script src="../icloud-utils.js"></script>
   <script src="../mail-provider-utils.js"></script>

@@ -26,8 +26,11 @@
       DEFAULT_NEX_SMS_BASE_URL = 'https://api.nexsms.net',
       DEFAULT_NEX_SMS_COUNTRY_ORDER = [1],
       DEFAULT_NEX_SMS_SERVICE_CODE = 'ot',
+      DEFAULT_SMS_BOWER_COUNTRY_ORDER = [],
+      DEFAULT_SMS_BOWER_SERVICE_CODE = '',
       DEFAULT_HERO_SMS_REUSE_ENABLED = true,
       createFiveSimProvider = null,
+      createSmsBowerProvider = null,
       HERO_SMS_COUNTRY_ID = 52,
       HERO_SMS_COUNTRY_LABEL = 'Thailand',
       HERO_SMS_SERVICE_CODE = 'dr',
@@ -82,11 +85,13 @@
     const PHONE_SMS_PROVIDER_HERO_SMS = PHONE_SMS_PROVIDER_HERO;
     const PHONE_SMS_PROVIDER_FIVE_SIM = PHONE_SMS_PROVIDER_5SIM;
     const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+    const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
     const DEFAULT_PHONE_SMS_PROVIDER = PHONE_SMS_PROVIDER_HERO;
     const DEFAULT_PHONE_SMS_PROVIDER_ORDER = Object.freeze([
       PHONE_SMS_PROVIDER_HERO,
       PHONE_SMS_PROVIDER_5SIM,
       PHONE_SMS_PROVIDER_NEXSMS,
+      PHONE_SMS_PROVIDER_SMSBOWER,
     ]);
     const MAX_PHONE_REUSABLE_POOL = 12;
     const PHONE_CODE_TIMEOUT_ERROR_PREFIX = 'PHONE_CODE_TIMEOUT::';
@@ -187,6 +192,9 @@
       if (normalized === PHONE_SMS_PROVIDER_NEXSMS) {
         return PHONE_SMS_PROVIDER_NEXSMS;
       }
+      if (normalized === PHONE_SMS_PROVIDER_SMSBOWER) {
+        return PHONE_SMS_PROVIDER_SMSBOWER;
+      }
       return PHONE_SMS_PROVIDER_HERO;
     }
 
@@ -236,6 +244,45 @@
       return ids.map((id) => ({
         id,
         label: `Country #${id}`,
+      }));
+    }
+
+    function normalizeSmsBowerCountryId(value, fallback = 0) {
+      return normalizeNexSmsCountryId(value, fallback);
+    }
+
+    function normalizeSmsBowerCountryOrder(value = []) {
+      return normalizeNexSmsCountryOrder(value);
+    }
+
+    function normalizeSmsBowerServiceCode(value = '', fallback = DEFAULT_SMS_BOWER_SERVICE_CODE) {
+      const normalized = String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '');
+      if (normalized) {
+        return normalized;
+      }
+      return String(fallback || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '');
+    }
+
+    function resolveSmsBowerCountryCandidates(state = {}) {
+      let ids = normalizeSmsBowerCountryOrder(state?.smsBowerCountryOrder);
+      if (!ids.length) {
+        ids = normalizeSmsBowerCountryOrder([
+          ...(state?.smsBowerCountryId !== undefined && state?.smsBowerCountryId !== null ? [state.smsBowerCountryId] : []),
+          ...(Array.isArray(state?.smsBowerCountryFallback) ? state.smsBowerCountryFallback : []),
+        ]);
+      }
+      if (!ids.length) {
+        ids = normalizeSmsBowerCountryOrder(DEFAULT_SMS_BOWER_COUNTRY_ORDER);
+      }
+      return ids.map((id) => ({
+        id,
+        label: normalizeCountryLabel(state?.smsBowerCountryLabel, `Country #${id}`),
       }));
     }
 
@@ -555,7 +602,7 @@
       });
 
       if (normalized.length) {
-        return normalized.slice(0, 3);
+        return normalized.slice(0, DEFAULT_PHONE_SMS_PROVIDER_ORDER.length);
       }
 
       const fallback = Array.isArray(fallbackOrder) ? fallbackOrder : [];
@@ -571,7 +618,7 @@
         fallbackNormalized.push(provider);
       });
 
-      return fallbackNormalized.slice(0, 3);
+      return fallbackNormalized.slice(0, DEFAULT_PHONE_SMS_PROVIDER_ORDER.length);
     }
 
     function resolvePhoneProviderOrder(state = {}, preferredProvider = '') {
@@ -599,7 +646,7 @@
         return fallbackOrder;
       }
       const withoutCurrent = fallbackOrder.filter((provider) => provider !== currentProvider);
-      return [currentProvider, ...withoutCurrent].slice(0, 3);
+      return [currentProvider, ...withoutCurrent].slice(0, DEFAULT_PHONE_SMS_PROVIDER_ORDER.length);
     }
 
     function reorderPriceCandidates(prices = [], acquirePriority = HERO_SMS_ACQUIRE_PRIORITY_COUNTRY, preferredPrice = null) {
@@ -827,6 +874,9 @@
       if (provider === PHONE_SMS_PROVIDER_NEXSMS) {
         return 'NexSMS';
       }
+      if (provider === PHONE_SMS_PROVIDER_SMSBOWER) {
+        return 'SMSBower';
+      }
       return 'HeroSMS';
     }
 
@@ -879,6 +929,25 @@
 
     function getFiveSimProviderForState(_state = {}) {
       return createResolvedFiveSimProvider();
+    }
+
+    function createResolvedSmsBowerProvider() {
+      const rootScope = typeof self !== 'undefined' ? self : globalThis;
+      const factory = createSmsBowerProvider || rootScope.PhoneSmsBowerProvider?.createProvider;
+      if (typeof factory !== 'function') {
+        return null;
+      }
+      return factory({
+        addLog,
+        fetchImpl,
+        sleepWithStop,
+        throwIfStopped,
+        getOAuthFlowStepTimeoutMs,
+      });
+    }
+
+    function getSmsBowerProviderForState(_state = {}) {
+      return createResolvedSmsBowerProvider();
     }
 
     function normalizeFiveSimCountryId(value, fallback = 'england') {
@@ -1043,20 +1112,28 @@
       const rawProvider = String(record.provider || '').trim();
       const provider = normalizePhoneSmsProvider(rawProvider);
       const rawCountryId = record.countryId ?? record.country;
-      const fallbackCountryId = provider === PHONE_SMS_PROVIDER_FIVE_SIM ? 'england' : HERO_SMS_COUNTRY_ID;
+      const usesNumericProviderCountryId = provider === PHONE_SMS_PROVIDER_NEXSMS
+        || provider === PHONE_SMS_PROVIDER_SMSBOWER;
+      const fallbackCountryId = provider === PHONE_SMS_PROVIDER_FIVE_SIM
+        ? 'england'
+        : (usesNumericProviderCountryId ? 0 : HERO_SMS_COUNTRY_ID);
       const expiresAt = normalizeTimestampMs(record.expiresAt);
       const serviceCode = String(
         record.serviceCode
         || (
           provider === PHONE_SMS_PROVIDER_FIVE_SIM
             ? DEFAULT_FIVE_SIM_PRODUCT
-            : (provider === PHONE_SMS_PROVIDER_NEXSMS ? DEFAULT_NEX_SMS_SERVICE_CODE : HERO_SMS_SERVICE_CODE)
+            : (
+              provider === PHONE_SMS_PROVIDER_NEXSMS
+                ? DEFAULT_NEX_SMS_SERVICE_CODE
+                : (provider === PHONE_SMS_PROVIDER_SMSBOWER ? DEFAULT_SMS_BOWER_SERVICE_CODE : HERO_SMS_SERVICE_CODE)
+            )
         )
       ).trim();
       const countryId = provider === PHONE_SMS_PROVIDER_FIVE_SIM
         ? normalizeFiveSimCountryId(record.countryCode ?? rawCountryId, fallbackCountryId)
         : (
-          provider === PHONE_SMS_PROVIDER_NEXSMS
+          usesNumericProviderCountryId
             ? normalizeNexSmsCountryId(rawCountryId, 0)
             : normalizeCountryId(rawCountryId, fallbackCountryId)
         );
@@ -1245,7 +1322,11 @@
       const rawCountryId = record.countryId ?? record.country;
       const countryId = provider === PHONE_SMS_PROVIDER_FIVE_SIM
         ? normalizeFiveSimCountryId(rawCountryId, '')
-        : Math.floor(Number(rawCountryId));
+        : (
+          provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_SMSBOWER
+            ? normalizeNexSmsCountryId(rawCountryId, -1)
+            : Math.floor(Number(rawCountryId))
+        );
       const countryLabel = String(record.countryLabel || '').trim();
       const statusAction = String(record.statusAction || '').trim();
 
@@ -1259,7 +1340,11 @@
         if (countryId) {
           fallback.countryId = countryId;
         }
-      } else if (Number.isFinite(countryId) && countryId > 0) {
+      } else if (
+        (provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_SMSBOWER)
+          ? (Number.isFinite(countryId) && countryId >= 0)
+          : (Number.isFinite(countryId) && countryId > 0)
+      ) {
         fallback.countryId = countryId;
         if (provider === PHONE_SMS_PROVIDER_5SIM) {
           fallback.countryCode = countryId;
@@ -1752,6 +1837,23 @@
         };
       }
 
+      if (provider === PHONE_SMS_PROVIDER_SMSBOWER) {
+        const apiKey = normalizeApiKey(state.smsBowerApiKey);
+        if (!apiKey) {
+          throw new Error('SMSBower API key is missing. Save it in the side panel before running the phone flow.');
+        }
+        const serviceCode = normalizeSmsBowerServiceCode(state.smsBowerServiceCode, DEFAULT_SMS_BOWER_SERVICE_CODE);
+        if (!serviceCode) {
+          throw new Error('SMSBower service code is missing. Save it in the side panel before running the phone flow.');
+        }
+        return {
+          provider,
+          apiKey,
+          serviceCode,
+          countryCandidates: resolveSmsBowerCountryCandidates(state),
+        };
+      }
+
       const apiKey = normalizeApiKey(state.heroSmsApiKey);
       if (!apiKey) {
         throw new Error('HeroSMS API key is missing. Save it in the side panel before running the phone flow.');
@@ -1983,7 +2085,7 @@
       if (!text) {
         return false;
       }
-      return /no\s+numbers\s+available\s+across|no\s+free\s+phones|numbers?\s+not\s+found|no\s+numbers\s+within\s+maxprice|step\s*9:\s*(?:5sim|nexsms)\s+countries\s+are\s+empty|\bNO_NUMBERS\b/i.test(text);
+      return /no\s+numbers\s+available\s+across|no\s+free\s+phones|numbers?\s+not\s+found|no\s+numbers\s+within\s+maxprice|step\s*9:\s*(?:5sim|nexsms|smsbower)\s+countries\s+are\s+empty|\bNO_NUMBERS\b/i.test(text);
     }
 
     function resolveNoSupplyDiagnosticsContext(state = {}, providerOrder = []) {
@@ -1993,6 +2095,7 @@
       const heroCountryCount = resolveCountryCandidates(state).length;
       const fiveSimCountryCount = resolveFiveSimCountryCandidates(state).length;
       const nexSmsCountryCount = resolveNexSmsCountryCandidates(state).length;
+      const smsBowerCountryCount = resolveSmsBowerCountryCandidates(state).length;
       const maxPrice = normalizeHeroSmsPriceLimit(state?.heroSmsMaxPrice);
       const acquirePriority = normalizeHeroSmsAcquirePriority(state?.heroSmsAcquirePriority);
       return {
@@ -2000,6 +2103,7 @@
         heroCountryCount,
         fiveSimCountryCount,
         nexSmsCountryCount,
+        smsBowerCountryCount,
         maxPrice,
         acquirePriority,
       };
@@ -2022,6 +2126,9 @@
       }
       if ((context?.nexSmsCountryCount || 0) <= 0) {
         suggestions.push('NexSMS 至少选择 1 个国家');
+      }
+      if ((context?.smsBowerCountryCount || 0) <= 0) {
+        suggestions.push('SMSBower 至少选择 1 个国家');
       }
       if (String(context?.acquirePriority || '') === HERO_SMS_ACQUIRE_PRIORITY_COUNTRY) {
         suggestions.push('可尝试切到“价格优先”');
@@ -2075,7 +2182,7 @@
       const providerOrderText = context.order.join(' > ');
       const suggestion = formatNoSupplySuggestion(context);
       await addLog(
-        `Step 9 diagnostics: 无号连续失败 ${nextStreak} 次；maxPrice=${maxPriceText}；providerOrder=${providerOrderText}；国家数 HeroSMS=${context.heroCountryCount}, 5sim=${context.fiveSimCountryCount}, NexSMS=${context.nexSmsCountryCount}。建议：${suggestion}。`,
+        `Step 9 diagnostics: 无号连续失败 ${nextStreak} 次；maxPrice=${maxPriceText}；providerOrder=${providerOrderText}；国家数 HeroSMS=${context.heroCountryCount}, 5sim=${context.fiveSimCountryCount}, NexSMS=${context.nexSmsCountryCount}, SMSBower=${context.smsBowerCountryCount}。建议：${suggestion}。`,
         nextStreak >= 2 ? 'warn' : 'info'
       );
       return true;
@@ -3139,12 +3246,21 @@
           return provider.requestActivation(state, options);
         }
       }
+      if (normalizePhoneSmsProvider(state?.phoneSmsProvider) === PHONE_SMS_PROVIDER_SMSBOWER) {
+        const provider = getSmsBowerProviderForState(state);
+        if (provider) {
+          return provider.requestActivation(state, options);
+        }
+      }
       const config = resolvePhoneConfig(state);
       if (config.provider === PHONE_SMS_PROVIDER_5SIM) {
         return requestFiveSimActivation(state, options);
       }
       if (config.provider === PHONE_SMS_PROVIDER_NEXSMS) {
         return requestNexSmsActivation(state, options);
+      }
+      if (config.provider === PHONE_SMS_PROVIDER_SMSBOWER) {
+        throw new Error('SMSBower provider is not loaded. Reload the extension and try again.');
       }
       const allCountryCandidates = Array.isArray(config.countryCandidates) && config.countryCandidates.length
         ? config.countryCandidates
@@ -3449,6 +3565,9 @@
           return provider.reuseActivation(state, normalizedActivation);
         }
       }
+      if (getActivationProviderId(normalizedActivation, state) === PHONE_SMS_PROVIDER_SMSBOWER) {
+        throw new Error('SMSBower does not support activation reuse for this flow.');
+      }
 
       const config = resolvePhoneConfig(state);
       if (config.provider === PHONE_SMS_PROVIDER_5SIM) {
@@ -3557,6 +3676,13 @@
           return;
         }
       }
+      if (getActivationProviderId(activation, state) === PHONE_SMS_PROVIDER_SMSBOWER) {
+        const provider = getSmsBowerProviderForState(state);
+        if (provider) {
+          await provider.finishActivation(state, activation);
+          return;
+        }
+      }
       await setPhoneActivationStatus(state, activation, 6, 'HeroSMS setStatus(6)');
     }
 
@@ -3573,6 +3699,13 @@
         }
         if (getActivationProviderId(activation, state) === PHONE_SMS_PROVIDER_FIVE_SIM) {
           const provider = getFiveSimProviderForState(state);
+          if (provider) {
+            await provider.cancelActivation(state, activation);
+            return;
+          }
+        }
+        if (getActivationProviderId(activation, state) === PHONE_SMS_PROVIDER_SMSBOWER) {
+          const provider = getSmsBowerProviderForState(state);
           if (provider) {
             await provider.cancelActivation(state, activation);
             return;
@@ -3647,6 +3780,13 @@
             return;
           }
         }
+        if (getActivationProviderId(activation, state) === PHONE_SMS_PROVIDER_SMSBOWER) {
+          const provider = getSmsBowerProviderForState(state);
+          if (provider) {
+            await provider.banActivation(state, activation);
+            return;
+          }
+        }
         await setPhoneActivationStatus(state, activation, 8, 'HeroSMS setStatus(8)');
       } catch (_) {
         // Best-effort cleanup.
@@ -3661,6 +3801,13 @@
       try {
         if (getActivationProviderId(activation, state) === PHONE_SMS_PROVIDER_FIVE_SIM) {
           // 5sim does not expose a HeroSMS-style setStatus(3) resend primitive.
+          return;
+        }
+        if (getActivationProviderId(activation, state) === PHONE_SMS_PROVIDER_SMSBOWER) {
+          const provider = getSmsBowerProviderForState(state);
+          if (provider && typeof provider.requestAdditionalSms === 'function') {
+            await provider.requestAdditionalSms(state, activation);
+          }
           return;
         }
         await setPhoneActivationStatus(state, activation, 3, 'HeroSMS setStatus(3)');
@@ -3804,6 +3951,12 @@
       }
       if (getActivationProviderId(normalizedActivation, state) === PHONE_SMS_PROVIDER_FIVE_SIM) {
         const provider = getFiveSimProviderForState(state);
+        if (provider) {
+          return provider.pollActivationCode(state, normalizedActivation, options);
+        }
+      }
+      if (getActivationProviderId(normalizedActivation, state) === PHONE_SMS_PROVIDER_SMSBOWER) {
+        const provider = getSmsBowerProviderForState(state);
         if (provider) {
           return provider.pollActivationCode(state, normalizedActivation, options);
         }
@@ -4060,6 +4213,13 @@
       if (normalizePhoneSmsProvider(providerId) === PHONE_SMS_PROVIDER_NEXSMS) {
         return resolveNexSmsCountryCandidates(state);
       }
+      if (normalizePhoneSmsProvider(providerId) === PHONE_SMS_PROVIDER_SMSBOWER) {
+        const provider = getSmsBowerProviderForState(state);
+        if (provider && typeof provider.resolveCountryCandidates === 'function') {
+          return provider.resolveCountryCandidates(state);
+        }
+        return resolveSmsBowerCountryCandidates(state);
+      }
       return resolveCountryCandidates(state);
     }
 
@@ -4075,6 +4235,16 @@
             return {
               id: countryId,
               label: normalizeFiveSimCountryLabel(activation.countryLabel, countryId),
+            };
+          }
+        } else if (providerId === PHONE_SMS_PROVIDER_SMSBOWER) {
+          const countryId = normalizeSmsBowerCountryId(activation.countryId, 0);
+          if (countryId >= 0) {
+            const matched = candidates.find((entry) => normalizeSmsBowerCountryId(entry.id, -1) === countryId);
+            if (matched) return matched;
+            return {
+              id: countryId,
+              label: normalizeCountryLabel(activation.countryLabel, `Country #${countryId}`),
             };
           }
         } else {
@@ -4358,7 +4528,10 @@
 
     function usePageProbeForPhoneResend(state = {}) {
       const provider = normalizePhoneSmsProvider(state?.phoneSmsProvider || DEFAULT_PHONE_SMS_PROVIDER);
-      return provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_5SIM;
+      return provider === PHONE_SMS_PROVIDER_HERO
+        || provider === PHONE_SMS_PROVIDER_NEXSMS
+        || provider === PHONE_SMS_PROVIDER_5SIM
+        || provider === PHONE_SMS_PROVIDER_SMSBOWER;
     }
 
     async function persistCurrentActivation(activation) {
@@ -4538,16 +4711,20 @@
       const providerOrder = resolvePhoneProviderOrder(state, provider);
       const countryCandidates = resolveCountryCandidatesForProvider(state, provider);
       if (
-        (provider === PHONE_SMS_PROVIDER_5SIM || provider === PHONE_SMS_PROVIDER_NEXSMS)
+        (
+          provider === PHONE_SMS_PROVIDER_5SIM
+          || provider === PHONE_SMS_PROVIDER_NEXSMS
+          || provider === PHONE_SMS_PROVIDER_SMSBOWER
+        )
         && !countryCandidates.length
       ) {
-        throw new Error(`Step ${getActivePhoneVerificationVisibleStep()}: ${provider === PHONE_SMS_PROVIDER_5SIM ? '5sim' : 'NexSMS'} countries are empty. Please select at least one country in 接码设置。`);
+        throw new Error(`Step ${getActivePhoneVerificationVisibleStep()}: ${getPhoneSmsProviderLabel(provider)} countries are empty. Please select at least one country in 接码设置。`);
       }
       const normalizeCountryKey = (value) => (
         provider === PHONE_SMS_PROVIDER_5SIM
           ? normalizeFiveSimCountryCode(value, '')
           : (
-            provider === PHONE_SMS_PROVIDER_NEXSMS
+            provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_SMSBOWER
               ? String(normalizeNexSmsCountryId(value, -1))
               : String(normalizeCountryId(value, 0))
           )
@@ -4556,7 +4733,7 @@
         (Array.isArray(options?.blockedCountryIds) ? options.blockedCountryIds : [])
           .map((value) => normalizeCountryKey(value))
           .filter((id) => (
-            provider === PHONE_SMS_PROVIDER_NEXSMS
+            provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_SMSBOWER
               ? (id !== '' && id !== null && id !== undefined)
               : Boolean(id && id !== '0')
           ))
@@ -4565,7 +4742,7 @@
         countryCandidates
           .map((entry) => normalizeCountryKey(entry.id || entry.code))
           .filter((id) => (
-            provider === PHONE_SMS_PROVIDER_NEXSMS
+            provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_SMSBOWER
               ? (id !== '' && id !== null && id !== undefined && !blockedCountryIds.has(id))
               : Boolean(id && id !== '0' && !blockedCountryIds.has(id))
           ))
@@ -4574,7 +4751,7 @@
         provider === PHONE_SMS_PROVIDER_5SIM
           ? ''
           : (
-            provider === PHONE_SMS_PROVIDER_NEXSMS
+            provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_SMSBOWER
               ? ''
               : HERO_SMS_COUNTRY_LABEL
           )
@@ -4718,7 +4895,7 @@
           const providerLabel = getPhoneSmsProviderLabel(providerCandidate);
           if (
             providerCandidate !== provider
-            && /step\s*9:\s*(?:5sim|nexsms)\s+countries\s+are\s+empty/i.test(providerErrorMessage)
+            && /step\s*9:\s*(?:5sim|nexsms|smsbower)\s+countries\s+are\s+empty/i.test(providerErrorMessage)
           ) {
             skippedFallbackProviders.push(`${providerLabel}: countries are empty`);
             await addLog(
@@ -4782,7 +4959,8 @@
       }
       const reusableProvider = normalizedActivation.provider;
       const canPersistReusableActivation = reusableProvider === PHONE_SMS_PROVIDER_HERO
-        || reusableProvider === PHONE_SMS_PROVIDER_5SIM;
+        || reusableProvider === PHONE_SMS_PROVIDER_5SIM
+        || reusableProvider === PHONE_SMS_PROVIDER_SMSBOWER;
       if (!canPersistReusableActivation) {
         await clearReusableActivation();
         return;
@@ -4975,10 +5153,9 @@
       if (!normalizedActivation) {
         throw new Error('缺少手机号接码订单。');
       }
-      const providerLabel = normalizedActivation.provider === PHONE_SMS_PROVIDER_5SIM
-        ? '5sim'
-        : (normalizedActivation.provider === PHONE_SMS_PROVIDER_NEXSMS ? 'NexSMS' : 'HeroSMS');
-      const usePageResend = normalizedActivation.provider !== PHONE_SMS_PROVIDER_5SIM;
+      const providerLabel = getPhoneSmsProviderLabel(normalizedActivation.provider);
+      const usePageResend = normalizedActivation.provider !== PHONE_SMS_PROVIDER_5SIM
+        && normalizedActivation.provider !== PHONE_SMS_PROVIDER_SMSBOWER;
 
       const waitSeconds = normalizePhoneCodeWaitSeconds(state?.phoneCodeWaitSeconds);
       const timeoutWindows = normalizePhoneCodeTimeoutWindows(state?.phoneCodeTimeoutWindows);
@@ -5786,7 +5963,7 @@
           const normalizedCountryCode = normalizeFiveSimCountryCode(countryId, '');
           return normalizedCountryCode ? `${normalizedProvider}:${normalizedCountryCode}` : '';
         }
-        if (normalizedProvider === PHONE_SMS_PROVIDER_NEXSMS) {
+        if (normalizedProvider === PHONE_SMS_PROVIDER_NEXSMS || normalizedProvider === PHONE_SMS_PROVIDER_SMSBOWER) {
           const normalizedCountryId = normalizeNexSmsCountryId(countryId, -1);
           return normalizedCountryId >= 0 ? `${normalizedProvider}:${normalizedCountryId}` : '';
         }
@@ -5828,6 +6005,12 @@
           const normalizedCountryId = normalizeNexSmsCountryId(normalizedCountryKey, -1);
           const matched = resolveNexSmsCountryCandidates(state)
             .find((entry) => normalizeNexSmsCountryId(entry.id, -1) === normalizedCountryId);
+          return matched?.label || `Country #${normalizedCountryId}`;
+        }
+        if (normalizedProvider === PHONE_SMS_PROVIDER_SMSBOWER) {
+          const normalizedCountryId = normalizeSmsBowerCountryId(normalizedCountryKey, -1);
+          const matched = resolveSmsBowerCountryCandidates(state)
+            .find((entry) => normalizeSmsBowerCountryId(entry.id, -1) === normalizedCountryId);
           return matched?.label || `Country #${normalizedCountryId}`;
         }
         const normalizedCountryId = normalizeCountryId(normalizedCountryKey, 0);

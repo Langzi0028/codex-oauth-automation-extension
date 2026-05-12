@@ -32,6 +32,54 @@ function buildHeroSmsStatusV2Payload({ smsCode = '', smsText = '', callCode = ''
   });
 }
 
+function createFakeSmsBowerProviderHarness(overrides = {}) {
+  const calls = [];
+  const factoryCalls = [];
+  const activation = {
+    activationId: 'smsbower-activation-1',
+    phoneNumber: '+447911000111',
+    provider: 'smsbower',
+    serviceCode: 'ot',
+    countryId: 6,
+    countryLabel: 'Country #6',
+    successfulUses: 0,
+    maxUses: 1,
+  };
+  const provider = {
+    requestActivation: async (state, options) => {
+      calls.push({ method: 'requestActivation', state, options });
+      return activation;
+    },
+    pollActivationCode: async (state, receivedActivation, options) => {
+      calls.push({ method: 'pollActivationCode', state, activation: receivedActivation, options });
+      return '445566';
+    },
+    finishActivation: async (state, receivedActivation) => {
+      calls.push({ method: 'finishActivation', state, activation: receivedActivation });
+      return 'finished';
+    },
+    cancelActivation: async (state, receivedActivation) => {
+      calls.push({ method: 'cancelActivation', state, activation: receivedActivation });
+      return 'cancelled';
+    },
+    banActivation: async (state, receivedActivation) => {
+      calls.push({ method: 'banActivation', state, activation: receivedActivation });
+      return 'banned';
+    },
+    ...overrides,
+  };
+
+  return {
+    activation,
+    calls,
+    factoryCalls,
+    createSmsBowerProvider: (deps) => {
+      factoryCalls.push(deps);
+      return provider;
+    },
+  };
+}
+
 test('phone verification helper requests HeroSMS numbers with fixed OpenAI and Thailand parameters', async () => {
   const requests = [];
   const helpers = api.createPhoneVerificationHelpers({
@@ -2464,6 +2512,261 @@ test('phone verification helper polls and parses NexSMS verification codes', asy
   assert.equal(code, '998877');
   assert.equal(pollCount, 2);
   assert.equal(statusUpdates.length >= 1, true);
+});
+
+test('phone verification helper delegates SMSBower number requests to the injected provider', async () => {
+  const harness = createFakeSmsBowerProviderHarness();
+  const options = { blockedCountryIds: [1] };
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    createSmsBowerProvider: harness.createSmsBowerProvider,
+    fetchImpl: async (url) => {
+      throw new Error(`Unexpected network request: ${url}`);
+    },
+    getOAuthFlowStepTimeoutMs: async (fallback) => fallback,
+    getState: async () => ({}),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const activation = await helpers.requestPhoneActivation({
+    phoneSmsProvider: 'smsbower',
+    smsBowerServiceCode: 'ot',
+  }, options);
+
+  assert.deepStrictEqual(activation, harness.activation);
+  assert.equal(harness.factoryCalls.length, 1);
+  assert.equal(typeof harness.factoryCalls[0].fetchImpl, 'function');
+  assert.equal(typeof harness.factoryCalls[0].addLog, 'function');
+  assert.equal(typeof harness.factoryCalls[0].sleepWithStop, 'function');
+  assert.equal(typeof harness.factoryCalls[0].throwIfStopped, 'function');
+  assert.equal(typeof harness.factoryCalls[0].getOAuthFlowStepTimeoutMs, 'function');
+  assert.deepStrictEqual(harness.calls, [{
+    method: 'requestActivation',
+    state: {
+      phoneSmsProvider: 'smsbower',
+      smsBowerServiceCode: 'ot',
+    },
+    options,
+  }]);
+});
+
+test('phone verification helper does not fall back to hardcoded SMSBower service defaults', async () => {
+  const requests = [];
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    fetchImpl: async (url) => {
+      requests.push(url);
+      throw new Error(`Unexpected network request: ${url}`);
+    },
+    getState: async () => ({}),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  await assert.rejects(
+    () => helpers.requestPhoneActivation({
+      phoneSmsProvider: 'smsbower',
+      smsBowerApiKey: 'demo-key',
+    }),
+    /SMSBower service code/i
+  );
+  assert.deepStrictEqual(requests, []);
+});
+
+test('phone verification helper requires the SMSBower API key instead of reusing the HeroSMS key', async () => {
+  const requests = [];
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    fetchImpl: async (url) => {
+      requests.push(url);
+      throw new Error(`Unexpected network request: ${url}`);
+    },
+    getState: async () => ({}),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  await assert.rejects(
+    () => helpers.requestPhoneActivation({
+      phoneSmsProvider: 'smsbower',
+      heroSmsApiKey: 'hero-key',
+      smsBowerServiceCode: 'ot',
+    }),
+    /SMSBower API key/i
+  );
+  assert.deepStrictEqual(requests, []);
+});
+
+test('phone verification helper passes SMSBower country order into real provider requests', async () => {
+  const requests = [];
+  const smsBowerSource = fs.readFileSync('phone-sms/providers/smsbower.js', 'utf8');
+  const smsBowerModule = new Function('self', `${smsBowerSource}; return self.PhoneSmsBowerProvider;`)({});
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    createSmsBowerProvider: smsBowerModule.createProvider,
+    fetchImpl: async (url) => {
+      requests.push(new URL(url));
+      return { ok: true, text: async () => 'ACCESS_NUMBER:country-order-1:79991234567' };
+    },
+    getState: async () => ({}),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const activation = await helpers.requestPhoneActivation({
+    phoneSmsProvider: 'smsbower',
+    smsBowerApiKey: 'demo-key',
+    smsBowerServiceCode: 'ot',
+    smsBowerCountryOrder: [6, 7],
+  });
+
+  assert.equal(requests[0].searchParams.get('action'), 'getNumber');
+  assert.equal(requests[0].searchParams.get('country'), '6');
+  assert.equal(activation.countryId, '6');
+});
+
+test('phone verification helper delegates SMSBower polling by activation provider', async () => {
+  const harness = createFakeSmsBowerProviderHarness();
+  const options = { timeoutMs: 5000, intervalMs: 1, maxRounds: 3 };
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    createSmsBowerProvider: harness.createSmsBowerProvider,
+    fetchImpl: async (url) => {
+      throw new Error(`Unexpected network request: ${url}`);
+    },
+    getState: async () => ({}),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const code = await helpers.pollPhoneActivationCode(
+    { phoneSmsProvider: 'hero-sms', heroSmsApiKey: 'demo-key' },
+    harness.activation,
+    options
+  );
+
+  assert.equal(code, '445566');
+  assert.deepStrictEqual(harness.calls, [{
+    method: 'pollActivationCode',
+    state: { phoneSmsProvider: 'hero-sms', heroSmsApiKey: 'demo-key' },
+    activation: harness.activation,
+    options,
+  }]);
+});
+
+test('signup phone helper finalizes SMSBower signup activation through the injected provider', async () => {
+  const setStateCalls = [];
+  const harness = createFakeSmsBowerProviderHarness();
+  let currentState = {
+    phoneSmsProvider: 'smsbower',
+    signupPhoneActivation: harness.activation,
+    signupPhoneNumber: harness.activation.phoneNumber,
+    signupPhoneVerificationPurpose: 'signup',
+    currentPhoneActivation: {
+      activationId: 'add-phone-activation',
+      phoneNumber: '+66900000000',
+      provider: 'hero-sms',
+      serviceCode: 'dr',
+      countryId: 52,
+      successfulUses: 0,
+      maxUses: 3,
+    },
+  };
+  const initialState = currentState;
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    createSmsBowerProvider: harness.createSmsBowerProvider,
+    fetchImpl: async (url) => {
+      throw new Error(`Unexpected network request: ${url}`);
+    },
+    getState: async () => currentState,
+    sendToContentScriptResilient: async () => ({}),
+    setState: async (updates) => {
+      setStateCalls.push(updates);
+      currentState = { ...currentState, ...updates };
+    },
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const finalized = await helpers.finalizeSignupPhoneActivationAfterSuccess(currentState, currentState.signupPhoneActivation);
+
+  assert.equal(finalized.provider, 'smsbower');
+  assert.deepStrictEqual(harness.calls, [{
+    method: 'finishActivation',
+    state: initialState,
+    activation: harness.activation,
+  }]);
+  assert.equal(currentState.signupPhoneActivation, null);
+  assert.equal(currentState.signupPhoneCompletedActivation.provider, 'smsbower');
+  assert.equal(currentState.currentPhoneActivation.activationId, 'add-phone-activation');
+  assert.ok(!setStateCalls.some((updates) => Object.prototype.hasOwnProperty.call(updates, 'currentPhoneActivation')));
+});
+
+test('signup phone helper cancels SMSBower signup activation through the injected provider', async () => {
+  const setStateCalls = [];
+  const harness = createFakeSmsBowerProviderHarness();
+  let currentState = {
+    phoneSmsProvider: 'smsbower',
+    signupPhoneActivation: harness.activation,
+    signupPhoneNumber: harness.activation.phoneNumber,
+    signupPhoneVerificationPurpose: 'signup',
+    currentPhoneActivation: {
+      activationId: 'add-phone-activation',
+      phoneNumber: '+66900000000',
+      provider: 'hero-sms',
+      serviceCode: 'dr',
+      countryId: 52,
+      successfulUses: 0,
+      maxUses: 3,
+    },
+  };
+  const initialState = currentState;
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    createSmsBowerProvider: harness.createSmsBowerProvider,
+    fetchImpl: async (url) => {
+      throw new Error(`Unexpected network request: ${url}`);
+    },
+    getState: async () => currentState,
+    sendToContentScriptResilient: async () => ({}),
+    setState: async (updates) => {
+      setStateCalls.push(updates);
+      currentState = { ...currentState, ...updates };
+    },
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  await helpers.cancelSignupPhoneActivation(currentState, currentState.signupPhoneActivation);
+
+  assert.deepStrictEqual(harness.calls, [{
+    method: 'cancelActivation',
+    state: initialState,
+    activation: harness.activation,
+  }]);
+  assert.equal(currentState.signupPhoneActivation, null);
+  assert.equal(currentState.signupPhoneVerificationPurpose, '');
+  assert.equal(currentState.currentPhoneActivation.activationId, 'add-phone-activation');
+  assert.ok(!setStateCalls.some((updates) => Object.prototype.hasOwnProperty.call(updates, 'currentPhoneActivation')));
 });
 
 test('phone verification helper completes add-phone flow, clears current activation, and stores reusable number state', async () => {

@@ -146,6 +146,257 @@ test('sidepanel html exposes phone verification toggle and multi-provider SMS ro
   assert.doesNotMatch(html, /id="input-account-run-history-text-enabled"/);
 });
 
+test('sidepanel html wires SMSBower provider controls and loads it before registry', () => {
+  const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
+
+  const smsBowerScriptIndex = html.indexOf('../phone-sms/providers/smsbower.js');
+  const registryScriptIndex = html.indexOf('../phone-sms/providers/registry.js');
+  assert.ok(smsBowerScriptIndex >= 0, 'SMSBower provider script should be loaded');
+  assert.ok(registryScriptIndex >= 0, 'phone SMS registry script should be loaded');
+  assert.ok(
+    smsBowerScriptIndex < registryScriptIndex,
+    'SMSBower provider script should load before the phone SMS registry'
+  );
+
+  assert.match(html, /<option value="smsbower">SMSBower<\/option>/);
+  assert.match(html, /id="select-phone-sms-provider-order"[\s\S]*<option value="smsbower" selected>SMSBower<\/option>/);
+  assert.match(html, /id="row-sms-bower-api-key"/);
+  assert.match(html, /id="input-sms-bower-api-key"/);
+  assert.match(html, /data-password-toggle="input-sms-bower-api-key"/);
+  assert.match(html, /id="row-sms-bower-country"/);
+  assert.match(html, /id="select-sms-bower-country"[^>]*multiple/);
+  assert.match(html, /id="row-sms-bower-country-fallback"/);
+  assert.match(html, /id="display-sms-bower-country-fallback-order"/);
+  assert.match(html, /id="row-sms-bower-service-code"/);
+  assert.match(html, /id="input-sms-bower-service-code"/);
+  assert.match(html, /id="row-hero-sms-max-price"/);
+  assert.match(html, /id="input-hero-sms-max-price"/);
+});
+
+test('sidepanel source recognizes SMSBower settings, normalizers, labels, and password toggle wiring', () => {
+  assert.match(sidepanelSource, /const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';/);
+  assert.match(
+    sidepanelSource,
+    /DEFAULT_PHONE_SMS_PROVIDER_ORDER = Object\.freeze\(\[[\s\S]*PHONE_SMS_PROVIDER_SMSBOWER[\s\S]*\]\);/
+  );
+  assert.match(sidepanelSource, /const rowSmsBowerApiKey = document\.getElementById\('row-sms-bower-api-key'\);/);
+  assert.match(sidepanelSource, /const inputSmsBowerApiKey = document\.getElementById\('input-sms-bower-api-key'\);/);
+  assert.match(sidepanelSource, /const rowSmsBowerCountry = document\.getElementById\('row-sms-bower-country'\);/);
+  assert.match(sidepanelSource, /const selectSmsBowerCountry = document\.getElementById\('select-sms-bower-country'\);/);
+  assert.match(sidepanelSource, /const rowSmsBowerServiceCode = document\.getElementById\('row-sms-bower-service-code'\);/);
+  assert.match(sidepanelSource, /const inputSmsBowerServiceCode = document\.getElementById\('input-sms-bower-service-code'\);/);
+  assert.match(sidepanelSource, /function normalizeSmsBowerServiceCodeValue\(/);
+  assert.match(sidepanelSource, /function normalizeSmsBowerCountryOrderValue\(/);
+  assert.match(sidepanelSource, /smsBowerApiKey:/);
+  assert.match(sidepanelSource, /smsBowerServiceCode:/);
+  assert.match(sidepanelSource, /smsBowerCountryOrder:/);
+  assert.match(sidepanelSource, /smsBowerMaxPrice:/);
+  assert.match(sidepanelSource, /return 'SMSBower';/);
+});
+
+test('collectSettingsPayload persists SMSBower settings from sidepanel inputs', () => {
+  const api = new Function('normalizeIcloudTargetMailboxType', 'normalizeIcloudForwardMailProvider', `
+const window = {};
+let latestState = {
+  contributionMode: false,
+  mail2925UseAccountPool: false,
+  currentMail2925AccountId: '',
+  smsBowerCountryOrder: [1],
+};
+let cloudflareDomainEditMode = false;
+let cloudflareTempEmailDomainEditMode = false;
+const selectCfDomain = { value: '' };
+const selectTempEmailDomain = { value: '' };
+const selectPanelMode = { value: 'cpa' };
+const inputVpsUrl = { value: '' };
+const inputVpsPassword = { value: '' };
+const inputSub2ApiUrl = { value: '' };
+const inputSub2ApiEmail = { value: '' };
+const inputSub2ApiPassword = { value: '' };
+const inputSub2ApiGroup = { value: '' };
+const inputSub2ApiDefaultProxy = { value: '' };
+const inputCodex2ApiUrl = { value: '' };
+const inputCodex2ApiAdminKey = { value: '' };
+const inputPassword = { value: '' };
+const selectMailProvider = { value: '163' };
+const selectEmailGenerator = { value: 'duck' };
+const checkboxAutoDeleteIcloud = { checked: false };
+const selectIcloudHostPreference = { value: 'auto' };
+const inputMail2925UseAccountPool = { checked: false };
+const inputInbucketHost = { value: '' };
+const inputInbucketMailbox = { value: '' };
+const inputHotmailRemoteBaseUrl = { value: '' };
+const inputHotmailLocalBaseUrl = { value: '' };
+const inputLuckmailApiKey = { value: '' };
+const inputLuckmailBaseUrl = { value: '' };
+const selectLuckmailEmailType = { value: 'ms_graph' };
+const inputLuckmailDomain = { value: '' };
+const inputTempEmailBaseUrl = { value: '' };
+const inputTempEmailAdminAuth = { value: '' };
+const inputTempEmailCustomAuth = { value: '' };
+const inputTempEmailReceiveMailbox = { value: '' };
+const inputTempEmailUseRandomSubdomain = { checked: false };
+const inputAutoSkipFailures = { checked: false };
+const inputAutoSkipFailuresThreadIntervalMinutes = { value: '0' };
+const inputAutoDelayEnabled = { checked: false };
+const inputAutoDelayMinutes = { value: '30' };
+const inputAutoStepDelaySeconds = { value: '' };
+const inputPhoneVerificationEnabled = { checked: true };
+const inputFreePhoneReuseEnabled = { checked: false };
+const inputFreePhoneReuseAutoEnabled = { checked: false };
+const selectPhoneSmsProvider = { value: 'smsbower' };
+const inputVerificationResendCount = { value: '4' };
+const inputHeroSmsApiKey = { value: '' };
+const inputFiveSimApiKey = { value: '' };
+const inputFiveSimOperator = { value: 'any' };
+const inputFiveSimProduct = { value: 'openai' };
+const inputNexSmsApiKey = { value: '' };
+const inputNexSmsServiceCode = { value: 'ot' };
+const inputSmsBowerApiKey = { value: 'demo-key' };
+const inputSmsBowerServiceCode = { value: 'ot' };
+const inputHeroSmsReuseEnabled = { checked: true };
+const selectHeroSmsAcquirePriority = { value: 'country' };
+const inputHeroSmsMaxPrice = { value: '0.35' };
+const inputHeroSmsPreferredPrice = { value: '' };
+const inputPhoneReplacementLimit = { value: '3' };
+const inputPhoneCodeWaitSeconds = { value: '60' };
+const inputPhoneCodeTimeoutWindows = { value: '2' };
+const inputPhoneCodePollIntervalSeconds = { value: '5' };
+const inputPhoneCodePollMaxRounds = { value: '4' };
+const inputAccountRunHistoryHelperBaseUrl = { value: 'http://127.0.0.1:17373' };
+const DEFAULT_VERIFICATION_RESEND_COUNT = 4;
+const DEFAULT_PHONE_VERIFICATION_REPLACEMENT_LIMIT = 3;
+const DEFAULT_PHONE_CODE_WAIT_SECONDS = 60;
+const DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2;
+const DEFAULT_PHONE_CODE_POLL_INTERVAL_SECONDS = 5;
+const DEFAULT_PHONE_CODE_POLL_MAX_ROUNDS = 4;
+const PHONE_CODE_WAIT_SECONDS_MIN = 15;
+const PHONE_CODE_WAIT_SECONDS_MAX = 300;
+const PHONE_CODE_TIMEOUT_WINDOWS_MIN = 1;
+const PHONE_CODE_TIMEOUT_WINDOWS_MAX = 10;
+const PHONE_CODE_POLL_INTERVAL_SECONDS_MIN = 1;
+const PHONE_CODE_POLL_INTERVAL_SECONDS_MAX = 30;
+const PHONE_CODE_POLL_MAX_ROUNDS_MIN = 1;
+const PHONE_CODE_POLL_MAX_ROUNDS_MAX = 120;
+const DEFAULT_HERO_SMS_REUSE_ENABLED = true;
+const HERO_SMS_ACQUIRE_PRIORITY_COUNTRY = 'country';
+const HERO_SMS_ACQUIRE_PRIORITY_PRICE = 'price';
+const DEFAULT_HERO_SMS_ACQUIRE_PRIORITY = HERO_SMS_ACQUIRE_PRIORITY_COUNTRY;
+const PHONE_REPLACEMENT_LIMIT_MIN = 1;
+const PHONE_REPLACEMENT_LIMIT_MAX = 20;
+const DEFAULT_HERO_SMS_COUNTRY_ID = 52;
+const DEFAULT_HERO_SMS_COUNTRY_LABEL = 'Thailand';
+const PHONE_SMS_PROVIDER_HERO_SMS = 'hero-sms';
+const PHONE_SMS_PROVIDER_HERO = PHONE_SMS_PROVIDER_HERO_SMS;
+const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
+const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
+const DEFAULT_PHONE_SMS_PROVIDER = PHONE_SMS_PROVIDER_HERO_SMS;
+const DEFAULT_FIVE_SIM_COUNTRY_ID = 'vietnam';
+const DEFAULT_FIVE_SIM_COUNTRY_LABEL = '越南 (Vietnam)';
+const DEFAULT_FIVE_SIM_OPERATOR = 'any';
+const DEFAULT_FIVE_SIM_PRODUCT = 'openai';
+const DEFAULT_NEX_SMS_COUNTRY_ORDER = [1];
+const DEFAULT_NEX_SMS_SERVICE_CODE = 'ot';
+const DEFAULT_SMS_BOWER_COUNTRY_ORDER = [];
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+const FIVE_SIM_SUPPORTED_COUNTRY_ID_SET = new Set(['indonesia', 'thailand', 'vietnam']);
+const HERO_SMS_SUPPORTED_COUNTRY_ID_SET = new Set(['6', '52', '10']);
+const selectHeroSmsCountry = { value: '52', selectedIndex: 0, options: [{ textContent: 'Thailand' }] };
+function getCloudflareDomainsFromState() { return { domains: [], activeDomain: '' }; }
+function normalizeCloudflareDomainValue(value) { return String(value || '').trim(); }
+function getCloudflareTempEmailDomainsFromState() { return { domains: [], activeDomain: '' }; }
+function normalizeCloudflareTempEmailDomainValue(value) { return String(value || '').trim(); }
+function getSelectedLocalCpaStep9Mode() { return 'submit'; }
+function getSelectedPlusPaymentMethod() { return 'paypal'; }
+function getSelectedMail2925Mode() { return 'provide'; }
+function getSelectedHotmailServiceMode() { return 'local'; }
+function buildManagedAliasBaseEmailPayload() { return { gmailBaseEmail: '', mail2925BaseEmail: '', emailPrefix: '' }; }
+function normalizeLuckmailBaseUrl(value) { return String(value || '').trim(); }
+function normalizeLuckmailEmailType(value) { return String(value || '').trim() || 'ms_graph'; }
+function normalizeCloudflareTempEmailBaseUrlValue(value) { return String(value || '').trim(); }
+function normalizeCloudflareTempEmailReceiveMailboxValue(value) { return String(value || '').trim(); }
+function normalizeAccountRunHistoryHelperBaseUrlValue(value) { return String(value || '').trim(); }
+function normalizeAutoRunThreadIntervalMinutes(value) { return Number(value) || 0; }
+function normalizeAutoDelayMinutes(value) { return Number(value) || 30; }
+function normalizeAutoStepDelaySeconds(value) { return value === '' ? null : Number(value); }
+function normalizeVerificationResendCount(value, fallback) { return Number(value) || fallback; }
+function getSelectedPhonePreferredActivation() { return null; }
+function getCloudflareTempEmailDomainsFromState() { return { domains: [], activeDomain: '' }; }
+${extractFunction('normalizePhoneSmsProvider')}
+${extractFunction('normalizePhoneSmsProviderValue')}
+${extractFunction('normalizeFiveSimCountryCode')}
+${extractFunction('normalizeFiveSimCountryOrderValue')}
+${extractFunction('normalizeFiveSimProductValue')}
+${extractFunction('normalizeNexSmsCountryIdValue')}
+${extractFunction('normalizeNexSmsCountryOrderValue')}
+${extractFunction('normalizeNexSmsServiceCodeValue')}
+${extractFunction('normalizeSmsBowerCountryIdValue')}
+${extractFunction('normalizeSmsBowerCountryOrderValue')}
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+function getSelectedPhoneSmsProvider() { return normalizePhoneSmsProvider(selectPhoneSmsProvider?.value || latestState?.phoneSmsProvider); }
+function getSelectedPhoneSmsProviderOrder() { return ['smsbower', 'nexsms']; }
+${extractFunction('normalizeFiveSimCountryId')}
+${extractFunction('normalizeFiveSimCountryLabel')}
+${extractFunction('normalizeFiveSimOperator')}
+${extractFunction('normalizeFiveSimMaxPriceValue')}
+${extractFunction('normalizePhoneSmsMaxPriceValue')}
+${extractFunction('normalizeHeroSmsMaxPriceValue')}
+${extractFunction('normalizePhoneVerificationReplacementLimit')}
+${extractFunction('normalizePhoneCodeWaitSecondsValue')}
+${extractFunction('normalizePhoneCodeTimeoutWindowsValue')}
+${extractFunction('normalizePhoneCodePollIntervalSecondsValue')}
+${extractFunction('normalizePhoneCodePollMaxRoundsValue')}
+${extractFunction('normalizeHeroSmsReuseEnabledValue')}
+${extractFunction('normalizeHeroSmsAcquirePriority')}
+${extractFunction('normalizeHeroSmsCountryId')}
+${extractFunction('normalizeHeroSmsCountryLabel')}
+${extractFunction('getSelectedHeroSmsCountryOption')}
+function syncHeroSmsFallbackSelectionOrderFromSelect() { return []; }
+function getSelectedSignupMethod() { return 'phone'; }
+${extractFunction('normalizePanelMode')}
+${extractFunction('getSelectedPanelMode')}
+function getSelectedFiveSimCountries() { return []; }
+function getSelectedNexSmsCountries() { return []; }
+function getSelectedSmsBowerCountries() { return [{ id: 6, label: 'Country #6' }, { id: 7, label: 'Country #7' }]; }
+${extractFunction('normalizeFiveSimCountryFallbackList')}
+${extractFunction('normalizeHeroSmsCountryFallbackList')}
+${extractFunction('collectSettingsPayload')}
+return { collectSettingsPayload };
+`)(normalizeIcloudTargetMailboxType, normalizeIcloudForwardMailProvider);
+
+  const payload = api.collectSettingsPayload();
+
+  assert.equal(payload.phoneSmsProvider, 'smsbower');
+  assert.deepStrictEqual(payload.phoneSmsProviderOrder, ['smsbower', 'nexsms']);
+  assert.equal(payload.smsBowerApiKey, 'demo-key');
+  assert.equal(payload.smsBowerServiceCode, 'ot');
+  assert.deepStrictEqual(payload.smsBowerCountryOrder, [6, 7]);
+  assert.equal(payload.smsBowerMaxPrice, '0.35');
+});
+
+test('provider order summary can include SMSBower', () => {
+  const api = new Function(`
+const window = {};
+const PHONE_SMS_PROVIDER_HERO = 'hero-sms';
+const PHONE_SMS_PROVIDER_HERO_SMS = PHONE_SMS_PROVIDER_HERO;
+const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
+const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
+${extractFunction('normalizePhoneSmsProvider')}
+${extractFunction('normalizePhoneSmsProviderValue')}
+${extractFunction('normalizePhoneSmsProviderOrderValue')}
+${extractFunction('getPhoneSmsProviderLabel')}
+${extractFunction('formatPhoneSmsProviderOrderSummary')}
+return { formatPhoneSmsProviderOrderSummary };
+`)();
+
+  assert.equal(
+    api.formatPhoneSmsProviderOrderSummary(['smsbower', 'nexsms']),
+    '1. SMSBower → 2. NexSMS'
+  );
+});
+
 test('sidepanel source wires free reusable phone save and clear actions to runtime messages', () => {
   assert.match(sidepanelSource, /const inputFreePhoneReuseEnabled = document\.getElementById\('input-free-phone-reuse-enabled'\);/);
   assert.match(sidepanelSource, /const inputFreePhoneReuseAutoEnabled = document\.getElementById\('input-free-phone-reuse-auto-enabled'\);/);
