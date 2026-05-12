@@ -16,3 +16,7 @@ __pycache__/
 .worktrees/
 # Local exported runtime settings
 /config.json
+
+
+nodejs/node_cache/
+nodejs/.npm/
