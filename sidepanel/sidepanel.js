@@ -7366,6 +7366,10 @@ async function loadSmsBowerCountries() {
       if (displaySmsBowerCountryFallbackOrder) {
         displaySmsBowerCountryFallbackOrder.textContent = `国家列表获取失败：${sanitizePhoneSmsSidepanelError(error, [apiKey])}`;
       }
+      selectSmsBowerCountry.innerHTML = '';
+      smsBowerCountrySelectionOrder = [];
+      applySmsBowerCountrySelection([], { ensureDefault: false });
+      return;
     }
   }
   if (!selectSmsBowerCountry.options?.length) {
