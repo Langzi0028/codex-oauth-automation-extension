@@ -328,6 +328,15 @@ test('sidepanel source recognizes SMSBower settings, normalizers, labels, and pa
   );
 });
 
+test('sidepanel reloads SMSBower countries after restoring a saved SMSBower API key', () => {
+  const applySettingsSource = extractFunction('applySettingsState');
+
+  assert.match(
+    applySettingsSource,
+    /restoredPhoneSmsProvider === smsBowerProviderValue[\s\S]{0,700}loadSmsBowerCountries\(\)\.catch/
+  );
+});
+
 test('collectSettingsPayload persists SMSBower settings from sidepanel inputs', () => {
   const api = new Function('normalizeIcloudTargetMailboxType', 'normalizeIcloudForwardMailProvider', `
 const window = {};

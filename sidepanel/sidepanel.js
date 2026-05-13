@@ -9704,6 +9704,13 @@ function applySettingsState(state) {
       ? normalizeSmsBowerCountryProviderIdsValue(state?.smsBowerCountryProviderIds || '')
       : String(state?.smsBowerCountryProviderIds || '').replace(/\r/g, '').trim();
   }
+  if (restoredPhoneSmsProvider === smsBowerProviderValue
+    && typeof loadSmsBowerCountries === 'function'
+    && String(inputSmsBowerApiKey?.value || '').trim()) {
+    loadSmsBowerCountries().catch((error) => {
+      console.warn('Failed to reload SMSBower countries after settings restore:', error);
+    });
+  }
   if (typeof inputHeroSmsReuseEnabled !== 'undefined' && inputHeroSmsReuseEnabled) {
     inputHeroSmsReuseEnabled.checked = normalizeHeroSmsReuseEnabledValue(state?.heroSmsReuseEnabled);
   }
