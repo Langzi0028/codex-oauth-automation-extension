@@ -3,7 +3,8 @@
 /.github
 /_metadata/
 .vscode
-
+.AGENTS.md
+.env.local
 /data/account-run-history.txt
 /data/account-run-history.json
 .npm-test.log
