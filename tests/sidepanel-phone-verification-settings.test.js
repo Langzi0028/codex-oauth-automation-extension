@@ -291,6 +291,8 @@ test('sidepanel html wires SMSBower provider controls and loads it before regist
   assert.match(html, /id="select-sms-bower-country"[^>]*multiple/);
   assert.match(html, /id="row-sms-bower-country-fallback"/);
   assert.match(html, /id="display-sms-bower-country-fallback-order"/);
+  assert.match(html, /id="row-sms-bower-country-provider-ids"/);
+  assert.match(html, /id="input-sms-bower-country-provider-ids"/);
   assert.match(html, /id="row-sms-bower-service-code"/);
   assert.match(html, /id="input-sms-bower-service-code"/);
   assert.match(html, /id="row-hero-sms-max-price"/);
@@ -306,14 +308,18 @@ test('sidepanel source recognizes SMSBower settings, normalizers, labels, and pa
   assert.match(sidepanelSource, /const rowSmsBowerApiKey = document\.getElementById\('row-sms-bower-api-key'\);/);
   assert.match(sidepanelSource, /const inputSmsBowerApiKey = document\.getElementById\('input-sms-bower-api-key'\);/);
   assert.match(sidepanelSource, /const rowSmsBowerCountry = document\.getElementById\('row-sms-bower-country'\);/);
+  assert.match(sidepanelSource, /const rowSmsBowerCountryProviderIds = document\.getElementById\('row-sms-bower-country-provider-ids'\);/);
   assert.match(sidepanelSource, /const selectSmsBowerCountry = document\.getElementById\('select-sms-bower-country'\);/);
   assert.match(sidepanelSource, /const rowSmsBowerServiceCode = document\.getElementById\('row-sms-bower-service-code'\);/);
   assert.match(sidepanelSource, /const inputSmsBowerServiceCode = document\.getElementById\('input-sms-bower-service-code'\);/);
+  assert.match(sidepanelSource, /const inputSmsBowerCountryProviderIds = document\.getElementById\('input-sms-bower-country-provider-ids'\);/);
   assert.match(sidepanelSource, /function normalizeSmsBowerServiceCodeValue\(/);
   assert.match(sidepanelSource, /function normalizeSmsBowerCountryOrderValue\(/);
+  assert.match(sidepanelSource, /function normalizeSmsBowerCountryProviderIdsValue\(/);
   assert.match(sidepanelSource, /smsBowerApiKey:/);
   assert.match(sidepanelSource, /smsBowerServiceCode:/);
   assert.match(sidepanelSource, /smsBowerCountryOrder:/);
+  assert.match(sidepanelSource, /smsBowerCountryProviderIds:/);
   assert.match(sidepanelSource, /smsBowerMaxPrice:/);
   assert.match(sidepanelSource, /return 'SMSBower';/);
 });
@@ -378,6 +384,7 @@ const inputNexSmsApiKey = { value: '' };
 const inputNexSmsServiceCode = { value: 'ot' };
 const inputSmsBowerApiKey = { value: 'demo-key' };
 const inputSmsBowerServiceCode = { value: 'ot' };
+const inputSmsBowerCountryProviderIds = { value: '6:3,5\\n7:8,8\\n6:5,9' };
 const inputHeroSmsReuseEnabled = { checked: true };
 const selectHeroSmsAcquirePriority = { value: 'country' };
 const inputHeroSmsMaxPrice = { value: '0.35' };
@@ -457,6 +464,7 @@ ${extractFunction('normalizeNexSmsCountryOrderValue')}
 ${extractFunction('normalizeNexSmsServiceCodeValue')}
 ${extractFunction('normalizeSmsBowerCountryIdValue')}
 ${extractFunction('normalizeSmsBowerCountryOrderValue')}
+${extractFunction('normalizeSmsBowerCountryProviderIdsValue')}
 ${extractFunction('normalizeSmsBowerServiceCodeValue')}
 function getSelectedPhoneSmsProvider() { return normalizePhoneSmsProvider(selectPhoneSmsProvider?.value || latestState?.phoneSmsProvider); }
 function getSelectedPhoneSmsProviderOrder() { return ['smsbower', 'nexsms']; }
@@ -496,6 +504,7 @@ return { collectSettingsPayload };
   assert.equal(payload.smsBowerApiKey, 'demo-key');
   assert.equal(payload.smsBowerServiceCode, 'ot');
   assert.deepStrictEqual(payload.smsBowerCountryOrder, [6, 7]);
+  assert.equal(payload.smsBowerCountryProviderIds, '6:3,5,9\n7:8');
   assert.equal(payload.smsBowerMaxPrice, '0.35');
 });
 

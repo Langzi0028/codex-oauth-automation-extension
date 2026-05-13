@@ -783,6 +783,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   smsBowerApiKey: '',
   smsBowerServiceCode: DEFAULT_SMS_BOWER_SERVICE_CODE,
   smsBowerCountryOrder: [...DEFAULT_SMS_BOWER_COUNTRY_ORDER],
+  smsBowerCountryProviderIds: '',
   smsBowerMaxPrice: '',
   phonePreferredActivation: null,
 };
@@ -1510,6 +1511,81 @@ function normalizeSmsBowerCountryOrder(value = []) {
   });
 
   return normalized.slice(0, 10);
+}
+
+function normalizeSmsBowerCountryProviderIds(value = '') {
+  const rootScope = typeof self !== 'undefined' ? self : globalThis;
+  if (rootScope.PhoneSmsBowerProvider?.formatSmsBowerCountryProviderIds) {
+    return rootScope.PhoneSmsBowerProvider.formatSmsBowerCountryProviderIds(value);
+  }
+
+  const normalizeProviderId = (entry = '') => {
+    const text = String(entry ?? '').trim();
+    if (!/^\d+$/.test(text)) {
+      return '';
+    }
+    const parsed = Number.parseInt(text, 10);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? String(parsed) : '';
+  };
+  const rows = [];
+  const byCountry = new Map();
+  const appendMapping = (countryInput, providerInput) => {
+    const countryId = normalizeSmsBowerCountryId(countryInput, -1);
+    if (countryId < 0) {
+      return;
+    }
+    if (!byCountry.has(countryId)) {
+      byCountry.set(countryId, []);
+      rows.push(countryId);
+    }
+    const providerIds = byCountry.get(countryId);
+    const providerSource = Array.isArray(providerInput)
+      ? providerInput
+      : String(providerInput || '')
+        .split(/[,，;；\s]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    providerSource.forEach((entry) => {
+      const providerId = normalizeProviderId(entry);
+      if (providerId && !providerIds.includes(providerId)) {
+        providerIds.push(providerId);
+      }
+    });
+  };
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        appendMapping(entry.countryId ?? entry.country ?? entry.id, entry.providerIds ?? entry.providers ?? entry.providerId ?? []);
+      } else {
+        const [countryPart, providerPart = ''] = String(entry || '').split(/:(.*)/s).filter((part) => part !== undefined);
+        appendMapping(countryPart, providerPart);
+      }
+    });
+  } else if (value && typeof value === 'object') {
+    Object.entries(value).forEach(([countryId, providerIds]) => appendMapping(countryId, providerIds));
+  } else {
+    String(value || '')
+      .replace(/\r/g, '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .forEach((line) => {
+        const separatorIndex = line.indexOf(':');
+        if (separatorIndex < 0) {
+          return;
+        }
+        appendMapping(line.slice(0, separatorIndex), line.slice(separatorIndex + 1));
+      });
+  }
+
+  return rows
+    .map((countryId) => {
+      const providerIds = byCountry.get(countryId) || [];
+      return providerIds.length ? `${countryId}:${providerIds.join(',')}` : '';
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
 function normalizeSmsBowerMaxPrice(value = '') {
@@ -2744,6 +2820,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeSmsBowerServiceCode(value);
     case 'smsBowerCountryOrder':
       return normalizeSmsBowerCountryOrder(value);
+    case 'smsBowerCountryProviderIds':
+      return normalizeSmsBowerCountryProviderIds(value);
     case 'smsBowerMaxPrice':
       return normalizeSmsBowerMaxPrice(value);
     case 'phonePreferredActivation':

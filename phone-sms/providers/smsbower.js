@@ -82,6 +82,87 @@
     return normalized.slice(0, 10);
   }
 
+  function normalizeSmsBowerProviderId(value = '', fallback = '') {
+    const source = Array.isArray(value) ? value : [value];
+    for (const entry of source) {
+      const raw = entry && typeof entry === 'object'
+        ? (entry.providerId ?? entry.providerIds ?? entry.id ?? '')
+        : entry;
+      const normalized = String(raw ?? '').trim();
+      if (/^\d+$/.test(normalized) && Number(normalized) > 0) {
+        return normalized;
+      }
+    }
+    const fallbackText = String(fallback ?? '').trim();
+    return /^\d+$/.test(fallbackText) && Number(fallbackText) > 0 ? fallbackText : '';
+  }
+
+  function normalizeSmsBowerCountryProviderIds(value = []) {
+    const source = [];
+    if (Array.isArray(value)) {
+      source.push(...value);
+    } else if (value && typeof value === 'object') {
+      Object.entries(value).forEach(([countryId, providerIds]) => {
+        source.push({ countryId, providerIds });
+      });
+    } else {
+      String(value || '')
+        .split(/[\r\n]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .forEach((entry) => source.push(entry));
+    }
+
+    const byCountry = new Map();
+    source.forEach((entry) => {
+      let countryIdSource = '';
+      let providerSource = [];
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        countryIdSource = entry.countryId ?? entry.country ?? entry.id ?? '';
+        providerSource = entry.providerIds ?? entry.providers ?? entry.providerId ?? [];
+      } else {
+        const text = String(entry || '').trim();
+        const separatorIndex = text.indexOf(':');
+        if (separatorIndex < 0) {
+          return;
+        }
+        countryIdSource = text.slice(0, separatorIndex).trim();
+        providerSource = text.slice(separatorIndex + 1).trim();
+      }
+      const countryIdText = normalizeSmsBowerCountryId(countryIdSource, '');
+      if (!countryIdText) {
+        return;
+      }
+      const countryId = Number(countryIdText);
+      const providerEntries = Array.isArray(providerSource)
+        ? providerSource
+        : String(providerSource || '').split(/[,，;；\s]+/);
+      if (!byCountry.has(countryId)) {
+        byCountry.set(countryId, []);
+      }
+      const providerIds = byCountry.get(countryId);
+      const seen = new Set(providerIds);
+      providerEntries.forEach((providerEntry) => {
+        const providerId = normalizeSmsBowerProviderId(providerEntry, '');
+        if (!providerId || seen.has(providerId)) {
+          return;
+        }
+        seen.add(providerId);
+        providerIds.push(providerId);
+      });
+    });
+
+    return Array.from(byCountry.entries())
+      .filter(([, providerIds]) => providerIds.length > 0)
+      .map(([countryId, providerIds]) => ({ countryId, providerIds }));
+  }
+
+  function formatSmsBowerCountryProviderIds(value = []) {
+    return normalizeSmsBowerCountryProviderIds(value)
+      .map((entry) => `${entry.countryId}:${entry.providerIds.join(',')}`)
+      .join('\n');
+  }
+
   function normalizeSmsBowerMaxPrice(value = '') {
     const rawValue = String(value ?? '').trim();
     if (!rawValue) {
@@ -138,6 +219,34 @@
 
   function createSafeError(message, _payload) {
     const error = new Error(message);
+    return error;
+  }
+
+  function classifySmsBowerNumberPayload(payload) {
+    const text = describePayload(payload).toUpperCase();
+    if (/^(NO_NUMBERS|NO_NUMBER|NO_FREE_PHONES|NO_ACTIVATIONS)(?:\b|:|$)/.test(text)) {
+      return 'retryable';
+    }
+    if (/^(BAD_KEY|BAD_SERVICE|BAD_ACTION|BAD_STATUS|BAD_COUNTRY|BAD_PROVIDER|BAD_MAX_PRICE|NO_BALANCE|ERROR_SQL)(?:\b|:|$)/.test(text)) {
+      return 'terminal';
+    }
+    return '';
+  }
+
+  function createSmsBowerNumberResponseError(payload) {
+    const detail = describePayload(payload);
+    const error = createSafeError(
+      detail ? `SMSBower number response was malformed: ${detail}` : 'SMSBower number response was malformed.',
+      payload
+    );
+    const classification = classifySmsBowerNumberPayload(payload);
+    if (classification === 'retryable') {
+      error.smsBowerRetryable = true;
+      error.smsBowerTerminal = false;
+    } else if (classification === 'terminal') {
+      error.smsBowerRetryable = false;
+      error.smsBowerTerminal = true;
+    }
     return error;
   }
 
@@ -265,7 +374,8 @@
     const countryId = normalizeSmsBowerCountryId(state.smsBowerCountryId, countryOrder[0] || '');
     const countryLabel = normalizeSmsBowerCountryLabel(state.smsBowerCountryLabel, countryId);
     const maxPrice = normalizeSmsBowerMaxPrice(state.smsBowerMaxPrice);
-    return { serviceCode, countryId, countryLabel, maxPrice };
+    const providerId = normalizeSmsBowerProviderId(state.smsBowerProviderId, '');
+    return { serviceCode, countryId, countryLabel, maxPrice, providerId };
   }
 
   async function requestActivation(state = {}, _options = {}, deps = {}) {
@@ -278,10 +388,11 @@
       service: activationConfig.serviceCode,
       country: activationConfig.countryId,
       maxPrice: activationConfig.maxPrice,
+      providerIds: activationConfig.providerId,
     }, 'SMSBower number request');
     const activation = normalizeSmsBowerActivation(payload, activationConfig);
     if (!activation) {
-      throw createSafeError('SMSBower number response was malformed.', payload);
+      throw createSmsBowerNumberResponseError(payload);
     }
     return activation;
   }
@@ -448,6 +559,9 @@
       normalizeServiceCode: normalizeSmsBowerServiceCode,
       normalizeCountryId: normalizeSmsBowerCountryId,
       normalizeCountryLabel: normalizeSmsBowerCountryLabel,
+      normalizeProviderId: normalizeSmsBowerProviderId,
+      normalizeCountryProviderIds: normalizeSmsBowerCountryProviderIds,
+      formatCountryProviderIds: formatSmsBowerCountryProviderIds,
       normalizeMaxPrice: normalizeSmsBowerMaxPrice,
       normalizeActivation: normalizeSmsBowerActivation,
       extractVerificationCode,
@@ -472,6 +586,9 @@
     normalizeSmsBowerCountryOrder,
     normalizeSmsBowerCountryId,
     normalizeSmsBowerCountryLabel,
+    normalizeSmsBowerProviderId,
+    normalizeSmsBowerCountryProviderIds,
+    formatSmsBowerCountryProviderIds,
     normalizeSmsBowerMaxPrice,
     normalizeSmsBowerServiceCode,
   };

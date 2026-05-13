@@ -2534,7 +2534,9 @@ test('phone verification helper delegates SMSBower number requests to the inject
 
   const activation = await helpers.requestPhoneActivation({
     phoneSmsProvider: 'smsbower',
+    smsBowerApiKey: 'demo-key',
     smsBowerServiceCode: 'ot',
+    smsBowerCountryOrder: [6],
   }, options);
 
   assert.deepStrictEqual(activation, harness.activation);
@@ -2548,7 +2550,12 @@ test('phone verification helper delegates SMSBower number requests to the inject
     method: 'requestActivation',
     state: {
       phoneSmsProvider: 'smsbower',
+      smsBowerApiKey: 'demo-key',
       smsBowerServiceCode: 'ot',
+      smsBowerCountryOrder: [6],
+      smsBowerCountryId: 6,
+      smsBowerCountryLabel: 'Country #6',
+      smsBowerProviderId: '',
     },
     options,
   }]);
@@ -2636,6 +2643,109 @@ test('phone verification helper passes SMSBower country order into real provider
   assert.equal(requests[0].searchParams.get('action'), 'getNumber');
   assert.equal(requests[0].searchParams.get('country'), '6');
   assert.equal(activation.countryId, '6');
+});
+
+test('phone verification helper tries SMSBower country provider IDs in country order', async () => {
+  const attempts = [];
+  const retryable = new Error('NO_NUMBERS');
+  retryable.smsBowerRetryable = true;
+  retryable.smsBowerTerminal = false;
+  const harness = createFakeSmsBowerProviderHarness({
+    requestActivation: async (state, options) => {
+      attempts.push({
+        countryId: state.smsBowerCountryId,
+        countryLabel: state.smsBowerCountryLabel,
+        countryOrder: state.smsBowerCountryOrder,
+        providerId: state.smsBowerProviderId || '',
+        options,
+      });
+      if (attempts.length < 3) {
+        throw retryable;
+      }
+      return {
+        activationId: 'smsbower-country-7',
+        phoneNumber: '+77001234567',
+        provider: 'smsbower',
+        serviceCode: state.smsBowerServiceCode,
+        countryId: state.smsBowerCountryId,
+        countryLabel: state.smsBowerCountryLabel,
+        successfulUses: 0,
+        maxUses: 1,
+      };
+    },
+  });
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    createSmsBowerProvider: harness.createSmsBowerProvider,
+    fetchImpl: async (url) => {
+      throw new Error(`Unexpected network request: ${url}`);
+    },
+    getOAuthFlowStepTimeoutMs: async (fallback) => fallback,
+    getState: async () => ({}),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const activation = await helpers.requestPhoneActivation({
+    phoneSmsProvider: 'smsbower',
+    smsBowerApiKey: 'demo-key',
+    smsBowerServiceCode: 'ot',
+    smsBowerCountryOrder: [1, 7],
+    smsBowerCountryProviderIds: '1:3,5',
+  });
+
+  assert.deepStrictEqual(attempts.map(({ countryId, countryOrder, providerId }) => ({ countryId, countryOrder, providerId })), [
+    { countryId: 1, countryOrder: [1], providerId: '3' },
+    { countryId: 1, countryOrder: [1], providerId: '5' },
+    { countryId: 7, countryOrder: [7], providerId: '' },
+  ]);
+  assert.equal(activation.countryId, 7);
+  assert.equal(activation.countryLabel, 'Country #7');
+});
+
+test('phone verification helper stops SMSBower provider-id retries on terminal errors', async () => {
+  const attempts = [];
+  const terminal = new Error('BAD_KEY');
+  terminal.smsBowerRetryable = false;
+  terminal.smsBowerTerminal = true;
+  const harness = createFakeSmsBowerProviderHarness({
+    requestActivation: async (state) => {
+      attempts.push({
+        countryId: state.smsBowerCountryId,
+        providerId: state.smsBowerProviderId || '',
+      });
+      throw terminal;
+    },
+  });
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    createSmsBowerProvider: harness.createSmsBowerProvider,
+    fetchImpl: async (url) => {
+      throw new Error(`Unexpected network request: ${url}`);
+    },
+    getOAuthFlowStepTimeoutMs: async (fallback) => fallback,
+    getState: async () => ({}),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  await assert.rejects(
+    () => helpers.requestPhoneActivation({
+      phoneSmsProvider: 'smsbower',
+      smsBowerApiKey: 'demo-key',
+      smsBowerServiceCode: 'ot',
+      smsBowerCountryOrder: [1, 7],
+      smsBowerCountryProviderIds: '1:3,5\n7:8',
+    }),
+    /BAD_KEY/
+  );
+  assert.deepStrictEqual(attempts, [{ countryId: 1, providerId: '3' }]);
 });
 
 test('phone verification helper delegates SMSBower polling by activation provider', async () => {

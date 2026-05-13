@@ -255,6 +255,83 @@
       return normalizeNexSmsCountryOrder(value);
     }
 
+    function normalizeSmsBowerProviderId(value = '', fallback = '') {
+      const normalized = String(value ?? '').trim();
+      if (/^\d+$/.test(normalized) && Number(normalized) > 0) {
+        return normalized;
+      }
+      const fallbackText = String(fallback ?? '').trim();
+      return /^\d+$/.test(fallbackText) && Number(fallbackText) > 0 ? fallbackText : '';
+    }
+
+    function normalizeSmsBowerCountryProviderIds(value = []) {
+      const rootScope = typeof self !== 'undefined' ? self : globalThis;
+      if (rootScope.PhoneSmsBowerProvider?.normalizeSmsBowerCountryProviderIds) {
+        return rootScope.PhoneSmsBowerProvider.normalizeSmsBowerCountryProviderIds(value);
+      }
+      const source = [];
+      if (Array.isArray(value)) {
+        source.push(...value);
+      } else if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([countryId, providerIds]) => {
+          source.push({ countryId, providerIds });
+        });
+      } else {
+        String(value || '')
+          .split(/[\r\n]+/)
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+          .forEach((entry) => source.push(entry));
+      }
+      const byCountry = new Map();
+      source.forEach((entry) => {
+        let countryIdSource = '';
+        let providerSource = [];
+        if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          countryIdSource = entry.countryId ?? entry.country ?? entry.id ?? '';
+          providerSource = entry.providerIds ?? entry.providers ?? entry.providerId ?? [];
+        } else {
+          const text = String(entry || '').trim();
+          const separatorIndex = text.indexOf(':');
+          if (separatorIndex < 0) {
+            return;
+          }
+          countryIdSource = text.slice(0, separatorIndex).trim();
+          providerSource = text.slice(separatorIndex + 1).trim();
+        }
+        const countryId = normalizeSmsBowerCountryId(countryIdSource, -1);
+        if (countryId < 0) {
+          return;
+        }
+        const providerEntries = Array.isArray(providerSource)
+          ? providerSource
+          : String(providerSource || '').split(/[,，;；\s]+/);
+        if (!byCountry.has(countryId)) {
+          byCountry.set(countryId, []);
+        }
+        const providerIds = byCountry.get(countryId);
+        const seen = new Set(providerIds);
+        providerEntries.forEach((providerEntry) => {
+          const providerId = normalizeSmsBowerProviderId(providerEntry, '');
+          if (!providerId || seen.has(providerId)) {
+            return;
+          }
+          seen.add(providerId);
+          providerIds.push(providerId);
+        });
+      });
+      return Array.from(byCountry.entries())
+        .filter(([, providerIds]) => providerIds.length > 0)
+        .map(([countryId, providerIds]) => ({ countryId, providerIds }));
+    }
+
+    function getSmsBowerProviderIdsForCountry(countryProviderIds = [], countryId = 0) {
+      const normalizedCountryId = normalizeSmsBowerCountryId(countryId, -1);
+      const entry = normalizeSmsBowerCountryProviderIds(countryProviderIds)
+        .find((candidate) => normalizeSmsBowerCountryId(candidate.countryId, -1) === normalizedCountryId);
+      return Array.isArray(entry?.providerIds) ? entry.providerIds : [];
+    }
+
     function normalizeSmsBowerServiceCode(value = '', fallback = DEFAULT_SMS_BOWER_SERVICE_CODE) {
       const normalized = String(value || '')
         .trim()
@@ -3239,6 +3316,87 @@
       throw new Error('NexSMS failed to acquire a phone number.');
     }
 
+    function isSmsBowerRetryableActivationError(error) {
+      return Boolean(error?.smsBowerRetryable === true);
+    }
+
+    async function requestSmsBowerActivation(state = {}, options = {}) {
+      const provider = getSmsBowerProviderForState(state);
+      const config = resolvePhoneConfig(state);
+      if (!provider) {
+        throw new Error('SMSBower provider is not loaded. Reload the extension and try again.');
+      }
+      const allCountryCandidates = Array.isArray(config.countryCandidates) && config.countryCandidates.length
+        ? config.countryCandidates
+        : resolveSmsBowerCountryCandidates(state);
+      if (!allCountryCandidates.length) {
+        throw new Error('SMSBower countries are empty. Please select at least one country in 接码设置。');
+      }
+      const blockedCountryIds = new Set(
+        (Array.isArray(options?.blockedCountryIds) ? options.blockedCountryIds : [])
+          .map((value) => normalizeSmsBowerCountryId(value, -1))
+          .filter((id) => id >= 0)
+      );
+      let countryCandidates = allCountryCandidates.filter(
+        (entry) => !blockedCountryIds.has(normalizeSmsBowerCountryId(entry.id, -1))
+      );
+      if (!countryCandidates.length) {
+        countryCandidates = allCountryCandidates;
+        if (blockedCountryIds.size) {
+          await addLog(
+            '步骤 9：SMSBower 已选国家均达到临时收码失败跳过阈值，本轮解除跳过并重新尝试。',
+            'warn'
+          );
+        }
+      }
+
+      const countryProviderIds = normalizeSmsBowerCountryProviderIds(state.smsBowerCountryProviderIds);
+      const noNumbersByAttempt = [];
+      let lastRetryableError = null;
+
+      for (const countryConfig of countryCandidates) {
+        const countryId = normalizeSmsBowerCountryId(countryConfig.id, -1);
+        if (countryId < 0) {
+          continue;
+        }
+        const countryLabel = normalizeCountryLabel(countryConfig.label, `Country #${countryId}`);
+        const providerIds = getSmsBowerProviderIdsForCountry(countryProviderIds, countryId);
+        const attemptProviderIds = providerIds.length ? providerIds : [''];
+        for (const providerId of attemptProviderIds) {
+          const attemptState = {
+            ...state,
+            smsBowerCountryId: countryId,
+            smsBowerCountryLabel: countryLabel,
+            smsBowerCountryOrder: [countryId],
+            smsBowerProviderId: providerId,
+          };
+          try {
+            return await provider.requestActivation(attemptState, options);
+          } catch (error) {
+            if (!isSmsBowerRetryableActivationError(error)) {
+              throw error;
+            }
+            lastRetryableError = error;
+            noNumbersByAttempt.push(
+              providerId
+                ? `${countryLabel} / provider ${providerId}: ${error?.message || 'no numbers available'}`
+                : `${countryLabel}: ${error?.message || 'no numbers available'}`
+            );
+          }
+        }
+      }
+
+      if (noNumbersByAttempt.length) {
+        throw new Error(
+          `SMSBower no numbers available across ${noNumbersByAttempt.length} provider/country attempt(s): ${noNumbersByAttempt.join(' | ')}.`
+        );
+      }
+      if (lastRetryableError) {
+        throw lastRetryableError;
+      }
+      throw new Error('SMSBower failed to acquire a phone number.');
+    }
+
     async function requestPhoneActivation(state = {}, options = {}) {
       if (normalizePhoneSmsProvider(state?.phoneSmsProvider) === PHONE_SMS_PROVIDER_FIVE_SIM) {
         const provider = getFiveSimProviderForState(state);
@@ -3247,10 +3405,7 @@
         }
       }
       if (normalizePhoneSmsProvider(state?.phoneSmsProvider) === PHONE_SMS_PROVIDER_SMSBOWER) {
-        const provider = getSmsBowerProviderForState(state);
-        if (provider) {
-          return provider.requestActivation(state, options);
-        }
+        return requestSmsBowerActivation(state, options);
       }
       const config = resolvePhoneConfig(state);
       if (config.provider === PHONE_SMS_PROVIDER_5SIM) {

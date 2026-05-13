@@ -83,6 +83,74 @@ test('SMSBower provider requests activation with configurable service, numeric c
   assert.equal(activation.maxUses, 1);
 });
 
+test('SMSBower provider requests activation with a single providerIds value when configured', async () => {
+  const requests = [];
+  const provider = api.createProvider({
+    fetchImpl: async (url) => {
+      requests.push(new URL(url));
+      return createTextResponse('ACCESS_NUMBER:provider-3:79991234567');
+    },
+  });
+
+  const activation = await provider.requestActivation({
+    smsBowerApiKey: 'demo-key',
+    smsBowerServiceCode: 'ot',
+    smsBowerCountryId: '7',
+    smsBowerProviderId: '3',
+  });
+
+  assert.equal(requests[0].searchParams.get('providerIds'), '3');
+  assert.doesNotMatch(requests[0].search, /providerIds=3%2C5/);
+  assert.equal(activation.activationId, 'provider-3');
+});
+
+test('SMSBower provider normalizes per-country provider id mappings', () => {
+  const normalized = api.normalizeSmsBowerCountryProviderIds(' 6 : 3,5\n7:8,8\n6:5,9\nabc\n1:x,2 ');
+
+  assert.deepStrictEqual(normalized, [
+    { countryId: 6, providerIds: ['3', '5', '9'] },
+    { countryId: 7, providerIds: ['8'] },
+    { countryId: 1, providerIds: ['2'] },
+  ]);
+  assert.equal(api.formatSmsBowerCountryProviderIds(normalized), '6:3,5,9\n7:8\n1:2');
+  assert.deepStrictEqual(api.normalizeSmsBowerCountryProviderIds(''), []);
+  assert.equal(api.formatSmsBowerCountryProviderIds(''), '');
+});
+
+test('SMSBower provider classifies number request supply and terminal errors', async () => {
+  const retryableProvider = api.createProvider({
+    fetchImpl: async () => createTextResponse('NO_NUMBERS'),
+  });
+  const terminalProvider = api.createProvider({
+    fetchImpl: async () => createTextResponse('BAD_KEY'),
+  });
+  const state = {
+    smsBowerApiKey: 'demo-key',
+    smsBowerServiceCode: 'ot',
+    smsBowerCountryId: '7',
+  };
+
+  await assert.rejects(
+    () => retryableProvider.requestActivation(state),
+    (error) => {
+      assert.equal(error.smsBowerRetryable, true);
+      assert.equal(error.smsBowerTerminal, false);
+      assert.doesNotMatch(error.message, /demo-key/);
+      assert.doesNotMatch(error.message, /smsbower\.page/);
+      return true;
+    }
+  );
+  await assert.rejects(
+    () => terminalProvider.requestActivation(state),
+    (error) => {
+      assert.equal(error.smsBowerTerminal, true);
+      assert.equal(error.smsBowerRetryable, false);
+      assert.match(error.message, /BAD_KEY|API key/i);
+      return true;
+    }
+  );
+});
+
 test('SMSBower provider uses the first configured country order entry when no legacy country id is set', async () => {
   const requests = [];
   const provider = api.createProvider({

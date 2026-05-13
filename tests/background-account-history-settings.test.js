@@ -18,7 +18,7 @@ function extractFunction(name) {
   const start = markers
     .map((marker) => source.indexOf(marker))
     .find((index) => index >= 0);
-  if (start < 0) {
+  if (typeof start !== 'number' || start < 0) {
     throw new Error(`missing function ${name}`);
   }
 
@@ -38,6 +38,9 @@ function extractFunction(name) {
       braceStart = i;
       break;
     }
+  }
+  if (braceStart < 0) {
+    throw new Error(`missing function body ${name}`);
   }
 
   let depth = 0;
@@ -76,6 +79,7 @@ test('background account history settings are normalized independently from hotm
     extractFunction('normalizeSmsBowerServiceCode'),
     extractFunction('normalizeSmsBowerCountryId'),
     extractFunction('normalizeSmsBowerCountryOrder'),
+    extractFunction('normalizeSmsBowerCountryProviderIds'),
     extractFunction('normalizeSmsBowerMaxPrice'),
     extractFunction('normalizePhonePreferredActivation'),
     extractFunction('normalizePhoneVerificationReplacementLimit'),
@@ -343,6 +347,11 @@ return {
     api.normalizePersistentSettingValue('smsBowerCountryOrder', [0, '6', 0]),
     [0, 6]
   );
+  assert.equal(
+    api.normalizePersistentSettingValue('smsBowerCountryProviderIds', '6:3,5\n7:8,8\n6:5,9\nabc\n1:x,2'),
+    '6:3,5,9\n7:8\n1:2'
+  );
+  assert.equal(api.normalizePersistentSettingValue('smsBowerCountryProviderIds', ''), '');
   assert.deepStrictEqual(
     api.normalizePersistentSettingValue('phonePreferredActivation', {
       provider: 'nexsms',
