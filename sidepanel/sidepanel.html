@@ -1537,8 +1537,12 @@
             </div>
             <div class="data-row" id="row-sms-bower-service-code" style="display:none;">
               <span class="data-label">服务代码</span>
-              <input type="text" id="input-sms-bower-service-code" class="data-input mono"
-                placeholder="ot" />
+              <div class="data-inline data-value-actions">
+                <input type="text" id="input-sms-bower-service-code" class="data-input mono"
+                  placeholder="ot" />
+                <button id="btn-sms-bower-service-lookup" class="btn btn-outline btn-xs data-inline-btn" type="button">查服务</button>
+              </div>
+              <span id="display-sms-bower-service-lookup" class="data-value mono hero-sms-price-preview-text">未查询</span>
             </div>
             <div class="data-row" id="row-hero-sms-max-price" style="display:none;">
               <span class="data-label">价格</span>

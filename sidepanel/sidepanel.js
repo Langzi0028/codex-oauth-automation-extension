@@ -446,6 +446,8 @@ const inputNexSmsServiceCode = document.getElementById('input-nex-sms-service-co
 const inputSmsBowerApiKey = document.getElementById('input-sms-bower-api-key');
 const btnToggleSmsBowerApiKey = document.getElementById('btn-toggle-sms-bower-api-key');
 const inputSmsBowerServiceCode = document.getElementById('input-sms-bower-service-code');
+const btnSmsBowerServiceLookup = document.getElementById('btn-sms-bower-service-lookup');
+const displaySmsBowerServiceLookup = document.getElementById('display-sms-bower-service-lookup');
 const inputHeroSmsMaxPrice = document.getElementById('input-hero-sms-max-price');
 const inputHeroSmsPreferredPrice = document.getElementById('input-hero-sms-preferred-price');
 const inputPhoneReplacementLimit = document.getElementById('input-phone-replacement-limit');
@@ -4567,6 +4569,173 @@ function normalizeSmsBowerCountryFallbackList(value = []) {
   return normalized;
 }
 
+function sanitizePhoneSmsSidepanelError(error, secrets = []) {
+  let text = String(error?.message || error || '').trim();
+  (Array.isArray(secrets) ? secrets : [secrets]).forEach((secret) => {
+    const token = String(secret || '').trim();
+    if (token) {
+      text = text.split(token).join('[redacted]');
+    }
+  });
+  text = text
+    .replace(/api_key=[^&\s]+/gi, 'api_key=[redacted]')
+    .replace(/https?:\/\/\S+/gi, '[url]');
+  return text || '未知错误';
+}
+
+function createSmsBowerSidepanelProvider() {
+  const deps = typeof fetch === 'function' ? { fetchImpl: fetch } : {};
+  if (typeof window !== 'undefined') {
+    if (window.PhoneSmsProviderRegistry?.createProvider) {
+      return window.PhoneSmsProviderRegistry.createProvider('smsbower', deps);
+    }
+    if (window.PhoneSmsBowerProvider?.createProvider) {
+      return window.PhoneSmsBowerProvider.createProvider(deps);
+    }
+  }
+  throw new Error('SMSBower provider unavailable');
+}
+
+function buildSmsBowerSidepanelState(overrides = {}) {
+  const normalizeCountryOrder = typeof normalizeSmsBowerCountryOrderValue === 'function'
+    ? normalizeSmsBowerCountryOrderValue
+    : ((value = []) => (Array.isArray(value) ? value : [value])
+      .map((entry) => Math.floor(Number(entry && typeof entry === 'object' ? entry.id : entry)))
+      .filter((id, index, source) => Number.isFinite(id) && id >= 0 && source.indexOf(id) === index));
+  const normalizeCountryId = typeof normalizeSmsBowerCountryIdValue === 'function'
+    ? normalizeSmsBowerCountryIdValue
+    : ((value, fallback = 0) => {
+      const parsed = Math.floor(Number(value));
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        return parsed;
+      }
+      const fallbackParsed = Math.floor(Number(fallback));
+      return Number.isFinite(fallbackParsed) && fallbackParsed >= 0 ? fallbackParsed : 0;
+    });
+  const selectedCountries = Array.isArray(overrides.smsBowerCountryOrder)
+    ? overrides.smsBowerCountryOrder.map((id) => ({ id }))
+    : (typeof getSelectedSmsBowerCountries === 'function'
+      ? getSelectedSmsBowerCountries()
+      : normalizeCountryOrder(latestState?.smsBowerCountryOrder || []).map((id) => ({ id })));
+  const countryOrder = normalizeCountryOrder(
+    Array.isArray(overrides.smsBowerCountryOrder) ? overrides.smsBowerCountryOrder : selectedCountries
+  );
+  const firstCountryId = normalizeCountryId(
+    overrides.smsBowerCountryId ?? countryOrder[0] ?? latestState?.smsBowerCountryId,
+    countryOrder[0] ?? 0
+  );
+  const selectedCountry = selectedCountries.find((country) => normalizeCountryId(country?.id, -1) === firstCountryId) || {};
+  const defaultServiceCode = typeof DEFAULT_SMS_BOWER_SERVICE_CODE !== 'undefined'
+    ? DEFAULT_SMS_BOWER_SERVICE_CODE
+    : '';
+  const serviceCode = normalizeSmsBowerServiceCodeValue(
+    overrides.smsBowerServiceCode
+    ?? inputSmsBowerServiceCode?.value
+    ?? latestState?.smsBowerServiceCode
+    ?? defaultServiceCode,
+    defaultServiceCode
+  );
+  const maxPrice = normalizeSmsBowerMaxPriceValue(
+    overrides.smsBowerMaxPrice ?? inputHeroSmsMaxPrice?.value ?? latestState?.smsBowerMaxPrice ?? ''
+  );
+  return {
+    smsBowerApiKey: String(overrides.smsBowerApiKey ?? inputSmsBowerApiKey?.value ?? latestState?.smsBowerApiKey ?? '').trim(),
+    smsBowerServiceCode: serviceCode,
+    smsBowerCountryOrder: countryOrder,
+    smsBowerCountryId: firstCountryId,
+    smsBowerCountryLabel: String(overrides.smsBowerCountryLabel ?? selectedCountry?.label ?? latestState?.smsBowerCountryLabel ?? '').trim(),
+    smsBowerMaxPrice: maxPrice,
+  };
+}
+
+function normalizeSmsBowerCountryCatalog(payload = {}) {
+  const source = Array.isArray(payload)
+    ? payload.map((entry, index) => [String(entry?.id ?? entry?.countryId ?? index), entry])
+    : Object.entries(payload && typeof payload === 'object' ? payload : {});
+  const seen = new Set();
+  return source
+    .map(([key, value]) => {
+      const entry = value && typeof value === 'object' ? value : {};
+      const id = normalizeSmsBowerCountryIdValue(entry.id ?? entry.countryId ?? entry.country ?? key, -1);
+      if (id < 0 || seen.has(id)) {
+        return null;
+      }
+      seen.add(id);
+      const label = normalizeSmsBowerCountryLabel(
+        entry.label || entry.countryLabel || entry.eng || entry.chn || entry.rus || (typeof value === 'string' ? value : ''),
+        `Country #${id}`
+      );
+      return {
+        id,
+        label,
+        searchText: [label, id, entry.chn, entry.eng, entry.rus]
+          .map((part) => String(part || '').trim())
+          .filter(Boolean)
+          .join(' '),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeSmsBowerServicesCatalog(payload = {}) {
+  const rawServices = Array.isArray(payload)
+    ? payload
+    : (Array.isArray(payload?.services) ? payload.services : payload?.data || []);
+  const source = Array.isArray(rawServices)
+    ? rawServices.map((entry) => [entry?.code || entry?.id || '', entry])
+    : Object.entries(rawServices && typeof rawServices === 'object' ? rawServices : {});
+  const seen = new Set();
+  return source
+    .map(([key, value]) => {
+      const entry = value && typeof value === 'object' ? value : {};
+      const code = String(entry.code || entry.id || key || '').trim();
+      if (!code || seen.has(code)) {
+        return null;
+      }
+      seen.add(code);
+      const label = String(entry.name || entry.label || entry.title || (typeof value === 'string' ? value : '') || code).trim();
+      return { code, label, searchText: `${code} ${label}`.trim() };
+    })
+    .filter(Boolean);
+}
+
+function collectSmsBowerPriceEntriesForPreview(payload, entries = []) {
+  if (payload === null || payload === undefined) {
+    return entries;
+  }
+  if (typeof payload === 'number') {
+    if (Number.isFinite(payload) && payload > 0) {
+      entries.push({ price: Math.round(payload * 10000) / 10000, count: null });
+    }
+    return entries;
+  }
+  if (typeof payload !== 'object') {
+    return entries;
+  }
+  const directPrice = Number(payload.cost ?? payload.price ?? payload.rate);
+  if (Number.isFinite(directPrice) && directPrice > 0) {
+    const rawCount = Number(payload.count ?? payload.quantity ?? payload.stock ?? payload.available);
+    entries.push({
+      price: Math.round(directPrice * 10000) / 10000,
+      count: Number.isFinite(rawCount) ? Math.max(0, Math.floor(rawCount)) : null,
+    });
+    return entries;
+  }
+  Object.entries(payload).forEach(([key, value]) => {
+    const numericKey = Number(key);
+    if (Number.isFinite(numericKey) && numericKey > 0 && (typeof value === 'number' || typeof value === 'string')) {
+      const rawCount = Number(value);
+      entries.push({
+        price: Math.round(numericKey * 10000) / 10000,
+        count: Number.isFinite(rawCount) ? Math.max(0, Math.floor(rawCount)) : null,
+      });
+      return;
+    }
+    collectSmsBowerPriceEntriesForPreview(value, entries);
+  });
+  return entries;
+}
+
 function getFiveSimCountryDisplayNameByIso(isoCode = '') {
   const normalizedIso = String(isoCode || '').trim().toUpperCase();
   if (!normalizedIso || typeof Intl === 'undefined' || typeof Intl.DisplayNames !== 'function') {
@@ -7067,6 +7236,42 @@ async function loadSmsBowerCountries() {
   }
   const previousOrder = [...smsBowerCountrySelectionOrder];
   smsBowerCountrySearchTextById.clear();
+  const apiKey = String(inputSmsBowerApiKey?.value || '').trim();
+  if (apiKey) {
+    try {
+      const provider = createSmsBowerSidepanelProvider();
+      const payload = await provider.fetchCountries(buildSmsBowerSidepanelState({ smsBowerApiKey: apiKey }));
+      const preferredOrder = previousOrder.length
+        ? previousOrder
+        : normalizeSmsBowerCountryOrderValue(latestState?.smsBowerCountryOrder || []);
+      const orderRank = new Map(preferredOrder.map((id, index) => [normalizeSmsBowerCountryIdValue(id, -1), index]));
+      const countries = normalizeSmsBowerCountryCatalog(payload)
+        .sort((left, right) => {
+          const leftRank = orderRank.has(left.id) ? orderRank.get(left.id) : Number.POSITIVE_INFINITY;
+          const rightRank = orderRank.has(right.id) ? orderRank.get(right.id) : Number.POSITIVE_INFINITY;
+          if (leftRank !== rightRank) {
+            return leftRank - rightRank;
+          }
+          return String(left.label || '').localeCompare(String(right.label || ''));
+        });
+      if (countries.length) {
+        selectSmsBowerCountry.innerHTML = '';
+        countries.forEach((entry) => {
+          const option = document.createElement('option');
+          option.value = String(entry.id);
+          option.textContent = entry.label || `Country #${entry.id}`;
+          selectSmsBowerCountry.appendChild(option);
+          smsBowerCountrySearchTextById.set(entry.id, entry.searchText || `${option.textContent} ${entry.id}`);
+        });
+        applySmsBowerCountrySelection(preferredOrder, { ensureDefault: false });
+        return;
+      }
+    } catch (error) {
+      if (displaySmsBowerCountryFallbackOrder) {
+        displaySmsBowerCountryFallbackOrder.textContent = `国家列表获取失败：${sanitizePhoneSmsSidepanelError(error, [apiKey])}`;
+      }
+    }
+  }
   if (!selectSmsBowerCountry.options?.length) {
     SMS_BOWER_FALLBACK_COUNTRY_ITEMS.forEach((entry) => {
       const id = normalizeSmsBowerCountryIdValue(entry.id, -1);
@@ -7088,6 +7293,108 @@ async function loadSmsBowerCountries() {
   applySmsBowerCountrySelection(previousOrder.length ? previousOrder : latestState?.smsBowerCountryOrder || [], {
     ensureDefault: false,
   });
+}
+
+async function lookupSmsBowerServicesList() {
+  const apiKey = String(inputSmsBowerApiKey?.value || '').trim();
+  if (!apiKey) {
+    if (displaySmsBowerServiceLookup) {
+      displaySmsBowerServiceLookup.textContent = '请先填写 SMSBower API Key';
+    }
+    return;
+  }
+  if (displaySmsBowerServiceLookup) {
+    displaySmsBowerServiceLookup.textContent = '服务列表查询中...';
+  }
+  try {
+    const provider = createSmsBowerSidepanelProvider();
+    const payload = await provider.fetchServicesList(buildSmsBowerSidepanelState({ smsBowerApiKey: apiKey }));
+    const services = normalizeSmsBowerServicesCatalog(payload);
+    const query = String(inputSmsBowerServiceCode?.value || '').trim().toLowerCase();
+    const matched = query
+      ? services.filter((service) => String(service.searchText || '').toLowerCase().includes(query))
+      : [];
+    if (!displaySmsBowerServiceLookup) {
+      return;
+    }
+    if (!query) {
+      displaySmsBowerServiceLookup.textContent = `已获取 ${services.length} 个服务；请输入代码或关键词筛选。`;
+      return;
+    }
+    if (!matched.length) {
+      displaySmsBowerServiceLookup.textContent = `未找到匹配服务；已获取 ${services.length} 个服务。`;
+      return;
+    }
+    displaySmsBowerServiceLookup.textContent = matched
+      .slice(0, 10)
+      .map((service) => `${service.code}: ${service.label}`)
+      .join('\n');
+  } catch (error) {
+    if (displaySmsBowerServiceLookup) {
+      displaySmsBowerServiceLookup.textContent = `服务列表查询失败：${sanitizePhoneSmsSidepanelError(error, [apiKey])}`;
+    }
+  }
+}
+
+async function buildSmsBowerPricePreviewLines(options = {}) {
+  const providerLabel = String(options?.providerLabel || 'SMSBower').trim();
+  const apiKey = String(inputSmsBowerApiKey?.value || '').trim();
+  const serviceCode = normalizeSmsBowerServiceCodeValue(inputSmsBowerServiceCode?.value || latestState?.smsBowerServiceCode || DEFAULT_SMS_BOWER_SERVICE_CODE);
+  const selectedCountries = typeof getSelectedSmsBowerCountries === 'function'
+    ? getSelectedSmsBowerCountries()
+    : normalizeSmsBowerCountryOrderValue(latestState?.smsBowerCountryOrder || []).map((id) => ({ id, label: `Country #${id}` }));
+  const countries = selectedCountries
+    .map((country) => ({
+      id: normalizeSmsBowerCountryIdValue(country?.id ?? country, -1),
+      label: String(country?.label || '').trim(),
+    }))
+    .filter((country) => country.id >= 0);
+  if (!apiKey) {
+    return [`${providerLabel}: 请先填写 SMSBower API Key`];
+  }
+  if (!serviceCode) {
+    return [`${providerLabel}: 请先填写 SMSBower 服务代码`];
+  }
+  if (!countries.length) {
+    return [`${providerLabel}: 请先选择至少 1 个国家`];
+  }
+  const provider = createSmsBowerSidepanelProvider();
+  const baseState = buildSmsBowerSidepanelState({ smsBowerApiKey: apiKey, smsBowerServiceCode: serviceCode });
+  const maxPrice = baseState.smsBowerMaxPrice ? Number(baseState.smsBowerMaxPrice) : null;
+  const previews = [];
+  for (const country of countries) {
+    const countryLabel = country.label || getSmsBowerCountryLabelById(country.id) || `Country #${country.id}`;
+    try {
+      const state = {
+        ...baseState,
+        smsBowerCountryOrder: [country.id],
+        smsBowerCountryId: country.id,
+        smsBowerCountryLabel: countryLabel,
+      };
+      const payload = await provider.fetchPrices(state, { id: country.id, label: countryLabel });
+      const tierEntries = collectSmsBowerPriceEntriesForPreview(payload, []);
+      const availablePrices = tierEntries
+        .filter((entry) => entry.count === null || entry.count > 0)
+        .map((entry) => Number(entry.price))
+        .filter((price) => Number.isFinite(price) && price > 0)
+        .sort((left, right) => left - right);
+      if (!availablePrices.length) {
+        previews.push(`${countryLabel}: 暂无可用号源`);
+        continue;
+      }
+      const lowest = availablePrices[0];
+      const lowestText = formatHeroSmsPriceForPreview(lowest) || String(lowest);
+      const tierText = formatPriceTiersForPreview(tierEntries, { maxPrice });
+      if (Number.isFinite(maxPrice) && maxPrice > 0 && lowest > maxPrice) {
+        previews.push(`${countryLabel}: 最低 ${lowestText}（高于上限 ${formatHeroSmsPriceForPreview(maxPrice) || maxPrice}）${tierText ? `；档位：${tierText}` : ''}`);
+      } else {
+        previews.push(`${countryLabel}: 最低 ${lowestText}${tierText ? `；档位：${tierText}` : ''}`);
+      }
+    } catch (error) {
+      previews.push(`${countryLabel}: 查询失败（${sanitizePhoneSmsSidepanelError(error, [apiKey])}）`);
+    }
+  }
+  return [`${providerLabel}:`, ...(previews.length ? previews : ['未获取'])];
 }
 
 async function buildNexSmsPricePreviewLines(options = {}) {
@@ -7398,10 +7705,12 @@ async function previewHeroSmsPriceTiers() {
       const normalized = String(value || '').trim().toLowerCase();
       if (normalized === '5sim') return '5sim';
       if (normalized === 'nexsms') return 'nexsms';
+      if (normalized === 'smsbower') return 'smsbower';
       return 'hero-sms';
     });
   const fiveSimProviderValue = typeof PHONE_SMS_PROVIDER_FIVE_SIM !== 'undefined' ? PHONE_SMS_PROVIDER_FIVE_SIM : '5sim';
   const nexSmsProviderValue = typeof PHONE_SMS_PROVIDER_NEXSMS !== 'undefined' ? PHONE_SMS_PROVIDER_NEXSMS : 'nexsms';
+  const smsBowerProviderValue = typeof PHONE_SMS_PROVIDER_SMSBOWER !== 'undefined' ? PHONE_SMS_PROVIDER_SMSBOWER : 'smsbower';
   const heroProviderValue = typeof PHONE_SMS_PROVIDER_HERO !== 'undefined' ? PHONE_SMS_PROVIDER_HERO : 'hero-sms';
   const defaultProviderValue = typeof DEFAULT_PHONE_SMS_PROVIDER !== 'undefined' ? DEFAULT_PHONE_SMS_PROVIDER : 'hero-sms';
   const activeProvider = typeof getSelectedPhoneSmsProvider === 'function'
@@ -7433,6 +7742,11 @@ async function previewHeroSmsPriceTiers() {
     }
     if (provider === nexSmsProviderValue) {
       const lines = await buildNexSmsPricePreviewLines({ providerLabel: 'NexSMS' });
+      previews.push(...lines, '');
+      continue;
+    }
+    if (provider === smsBowerProviderValue) {
+      const lines = await buildSmsBowerPricePreviewLines({ providerLabel: 'SMSBower' });
       previews.push(...lines, '');
       continue;
     }
@@ -7630,7 +7944,33 @@ async function previewPhoneSmsBalance() {
   if (!displayPhoneSmsBalance) {
     return;
   }
-  const provider = getSelectedPhoneSmsProvider();
+  const provider = typeof getSelectedPhoneSmsProvider === 'function'
+    ? getSelectedPhoneSmsProvider()
+    : '';
+  const fiveSimProviderValue = typeof PHONE_SMS_PROVIDER_FIVE_SIM !== 'undefined' ? PHONE_SMS_PROVIDER_FIVE_SIM : '5sim';
+  const smsBowerProviderValue = typeof PHONE_SMS_PROVIDER_SMSBOWER !== 'undefined' ? PHONE_SMS_PROVIDER_SMSBOWER : 'smsbower';
+  if (provider === smsBowerProviderValue) {
+    const smsBowerApiKey = String(inputSmsBowerApiKey?.value || '').trim();
+    if (!smsBowerApiKey) {
+      displayPhoneSmsBalance.textContent = '请先填写 SMSBower API Key';
+      if (rowHeroSmsPriceTiers) rowHeroSmsPriceTiers.style.display = '';
+      return;
+    }
+    displayPhoneSmsBalance.textContent = '余额查询中...';
+    if (rowHeroSmsPriceTiers) rowHeroSmsPriceTiers.style.display = '';
+    try {
+      const smsBowerProvider = createSmsBowerSidepanelProvider();
+      const result = await smsBowerProvider.fetchBalance(buildSmsBowerSidepanelState({ smsBowerApiKey }));
+      const balance = Number(result?.balance);
+      const balanceText = Number.isFinite(balance)
+        ? (formatHeroSmsPriceForPreview(balance) || String(balance))
+        : describeHeroSmsPreviewPayload(result?.raw || result).replace(/^ACCESS_BALANCE:/i, '').trim();
+      displayPhoneSmsBalance.textContent = `SMSBower 余额 ${balanceText || '未知'}`;
+    } catch (error) {
+      displayPhoneSmsBalance.textContent = `余额查询失败：${sanitizePhoneSmsSidepanelError(error, [smsBowerApiKey])}`;
+    }
+    return;
+  }
   const apiKey = String(inputHeroSmsApiKey?.value || '').trim();
   if (!apiKey) {
     displayPhoneSmsBalance.textContent = '请先填写接码 API Key';
@@ -7640,11 +7980,11 @@ async function previewPhoneSmsBalance() {
   displayPhoneSmsBalance.textContent = '余额查询中...';
   if (rowHeroSmsPriceTiers) rowHeroSmsPriceTiers.style.display = '';
   try {
-    const url = provider === PHONE_SMS_PROVIDER_FIVE_SIM
+    const url = provider === fiveSimProviderValue
       ? new URL('https://5sim.net/v1/user/profile')
       : new URL('https://hero-sms.com/stubs/handler_api.php');
     const requestOptions = {};
-    if (provider === PHONE_SMS_PROVIDER_FIVE_SIM) {
+    if (provider === fiveSimProviderValue) {
       requestOptions.headers = {
         Accept: 'application/json',
         Authorization: `Bearer ${apiKey}`,
@@ -7665,7 +8005,7 @@ async function previewPhoneSmsBalance() {
       displayPhoneSmsBalance.textContent = `余额查询失败：${summarizeHeroSmsPreviewError(payload, response.status)}`;
       return;
     }
-    if (provider === PHONE_SMS_PROVIDER_FIVE_SIM) {
+    if (provider === fiveSimProviderValue) {
       const balance = Number(payload?.balance);
       const frozen = Number(payload?.frozen_balance);
       displayPhoneSmsBalance.textContent = Number.isFinite(balance)
@@ -14183,6 +14523,10 @@ btnSmsBowerCountryClear?.addEventListener('click', () => {
   if (typeof showToast === 'function') {
     showToast('已清空国家优先级。', 'info', 1800);
   }
+});
+
+btnSmsBowerServiceLookup?.addEventListener('click', () => {
+  lookupSmsBowerServicesList().catch(() => { });
 });
 
 btnPhoneSmsProviderOrderMenu?.addEventListener('click', (event) => {

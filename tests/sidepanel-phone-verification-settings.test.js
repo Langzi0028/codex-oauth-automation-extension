@@ -13,7 +13,7 @@ function extractFunction(name) {
   const start = markers
     .map((marker) => sidepanelSource.indexOf(marker))
     .find((index) => index >= 0);
-  if (start < 0) {
+  if (typeof start !== 'number' || start < 0) {
     throw new Error(`missing function ${name}`);
   }
 
@@ -78,6 +78,9 @@ function extractLastFunction(name) {
       break;
     }
   }
+  if (braceStart < 0) {
+    throw new Error(`missing function body ${name}`);
+  }
 
   let depth = 0;
   let end = braceStart;
@@ -94,6 +97,83 @@ function extractLastFunction(name) {
   }
 
   return sidepanelSource.slice(start, end);
+}
+
+function extractOptionalFunction(name) {
+  try {
+    return extractFunction(name);
+  } catch {
+    return '';
+  }
+}
+
+function createTestNode(tagName = 'div') {
+  return {
+    tagName: String(tagName || 'div').toUpperCase(),
+    value: '',
+    textContent: '',
+    hidden: false,
+    selected: false,
+    dataset: {},
+    style: {},
+    children: [],
+    classList: { toggle() {} },
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    },
+    addEventListener() {},
+    setAttribute(name, value) {
+      this[name] = String(value);
+    },
+    querySelector() {
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+    remove() {
+      this.removed = true;
+    },
+  };
+}
+
+function createTestDocument() {
+  return {
+    createElement(tagName) {
+      return createTestNode(tagName);
+    },
+  };
+}
+
+function createTestSelect(initialOptions = []) {
+  const select = {
+    value: '',
+    multiple: true,
+    options: initialOptions.map((entry) => ({
+      ...createTestNode('option'),
+      value: String(entry.value ?? entry.id ?? ''),
+      textContent: String(entry.textContent ?? entry.label ?? ''),
+      selected: Boolean(entry.selected),
+    })),
+    appendChild(option) {
+      this.options.push(option);
+      if (!this.value) {
+        this.value = String(option.value || '');
+      }
+      return option;
+    },
+  };
+  Object.defineProperty(select, 'innerHTML', {
+    get() {
+      return '';
+    },
+    set() {
+      this.options = [];
+      this.value = '';
+    },
+  });
+  return select;
 }
 
 test('sidepanel html exposes phone verification toggle and multi-provider SMS rows', () => {
@@ -1505,6 +1585,429 @@ return {
     api.fetchCalls.map((entry) => entry.url.pathname),
     ['/v1/guest/prices']
   );
+});
+
+test('sidepanel html exposes SMSBower service lookup controls', () => {
+  const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
+
+  assert.match(html, /id="btn-sms-bower-service-lookup"/);
+  assert.match(html, /id="display-sms-bower-service-lookup"/);
+});
+
+test('loadSmsBowerCountries fetches SMSBower countries with the SMSBower API key', async () => {
+  const api = new Function('assert', 'createTestSelect', 'createTestDocument', `
+const providerCalls = [];
+let fetchCountriesState = null;
+let appliedCountries = null;
+const fakeProvider = {
+  fetchCountries: async (state) => {
+    fetchCountriesState = state;
+    return {
+      7: { id: 7, eng: 'Kazakhstan', chn: '哈萨克斯坦' },
+      1: { id: 1, eng: 'United States', chn: '美国' },
+    };
+  },
+};
+const window = {
+  PhoneSmsProviderRegistry: {
+    createProvider(providerId, deps) {
+      providerCalls.push({ source: 'registry', providerId, deps });
+      return fakeProvider;
+    },
+  },
+  PhoneSmsBowerProvider: {
+    createProvider(deps) {
+      providerCalls.push({ source: 'module', deps });
+      return fakeProvider;
+    },
+  },
+};
+const document = createTestDocument();
+const inputSmsBowerApiKey = { value: 'demo-key' };
+const inputSmsBowerServiceCode = { value: 'zztest_service' };
+const inputHeroSmsMaxPrice = { value: '0.25' };
+const selectSmsBowerCountry = createTestSelect([{ value: '1', label: 'Country #1', selected: true }]);
+let smsBowerCountrySelectionOrder = [];
+const smsBowerCountrySearchTextById = new Map();
+const SMS_BOWER_FALLBACK_COUNTRY_ITEMS = Object.freeze([{ id: 0, label: 'Country #0' }]);
+const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+let latestState = { smsBowerCountryOrder: [7, 1], smsBowerServiceCode: 'zztest_service', smsBowerMaxPrice: '0.25' };
+async function fetch() { throw new Error('unexpected global fetch'); }
+function applySmsBowerCountrySelection(countries = [], options = {}) {
+  appliedCountries = { countries, options };
+  const selectedIds = countries.map((entry) => Number(entry?.id ?? entry)).filter(Number.isFinite);
+  const selectedSet = new Set(selectedIds);
+  Array.from(selectSmsBowerCountry.options || []).forEach((option) => {
+    option.selected = selectedSet.has(Number(option.value));
+  });
+  smsBowerCountrySelectionOrder = selectedIds;
+  return selectedIds.map((id) => ({ id, label: String(selectSmsBowerCountry.options.find((option) => Number(option.value) === id)?.textContent || '') }));
+}
+${extractFunction('normalizeSmsBowerCountryIdValue')}
+${extractFunction('normalizeSmsBowerCountryOrderValue')}
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+${extractFunction('normalizeSmsBowerMaxPriceValue')}
+${extractFunction('normalizeSmsBowerCountryLabel')}
+${extractFunction('normalizeSmsBowerCountryFallbackList')}
+${extractOptionalFunction('sanitizePhoneSmsSidepanelError')}
+${extractOptionalFunction('createSmsBowerSidepanelProvider')}
+${extractOptionalFunction('buildSmsBowerSidepanelState')}
+${extractOptionalFunction('normalizeSmsBowerCountryCatalog')}
+${extractFunction('loadSmsBowerCountries')}
+return {
+  selectSmsBowerCountry,
+  smsBowerCountrySearchTextById,
+  providerCalls,
+  get fetchCountriesState() { return fetchCountriesState; },
+  get appliedCountries() { return appliedCountries; },
+  loadSmsBowerCountries,
+};
+`)(assert, createTestSelect, createTestDocument);
+
+  await api.loadSmsBowerCountries();
+
+  assert.equal(api.providerCalls.length, 1);
+  assert.equal(api.fetchCountriesState.smsBowerApiKey, 'demo-key');
+  assert.equal(api.fetchCountriesState.smsBowerServiceCode, 'zztest_service');
+  assert.equal(api.fetchCountriesState.smsBowerMaxPrice, '0.25');
+  assert.deepStrictEqual(api.selectSmsBowerCountry.options.map((option) => option.value), ['7', '1']);
+  assert.match(api.selectSmsBowerCountry.options[0].textContent, /Kazakhstan/);
+  assert.match(api.selectSmsBowerCountry.options[1].textContent, /United States/);
+  assert.deepStrictEqual(api.appliedCountries.countries, [7, 1]);
+  assert.equal(api.appliedCountries.options.ensureDefault, false);
+  assert.match(api.smsBowerCountrySearchTextById.get(7), /Kazakhstan/);
+});
+
+test('loadSmsBowerCountries keeps fallback when SMSBower API key is missing', async () => {
+  const api = new Function('createTestSelect', 'createTestDocument', `
+let providerCalled = false;
+const window = {
+  PhoneSmsProviderRegistry: {
+    createProvider() {
+      providerCalled = true;
+      throw new Error('provider should not be created without key');
+    },
+  },
+};
+const document = createTestDocument();
+const inputSmsBowerApiKey = { value: '' };
+const inputSmsBowerServiceCode = { value: '' };
+const inputHeroSmsMaxPrice = { value: '' };
+const selectSmsBowerCountry = createTestSelect([]);
+let smsBowerCountrySelectionOrder = [];
+const smsBowerCountrySearchTextById = new Map();
+const SMS_BOWER_FALLBACK_COUNTRY_ITEMS = Object.freeze([{ id: 0, label: 'Country #0' }]);
+const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+let latestState = { smsBowerCountryOrder: [] };
+function applySmsBowerCountrySelection(countries = [], options = {}) { return countries; }
+${extractFunction('normalizeSmsBowerCountryIdValue')}
+${extractFunction('normalizeSmsBowerCountryOrderValue')}
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+${extractFunction('normalizeSmsBowerMaxPriceValue')}
+${extractFunction('normalizeSmsBowerCountryLabel')}
+${extractFunction('normalizeSmsBowerCountryFallbackList')}
+${extractOptionalFunction('sanitizePhoneSmsSidepanelError')}
+${extractOptionalFunction('createSmsBowerSidepanelProvider')}
+${extractOptionalFunction('buildSmsBowerSidepanelState')}
+${extractOptionalFunction('normalizeSmsBowerCountryCatalog')}
+${extractFunction('loadSmsBowerCountries')}
+return {
+  selectSmsBowerCountry,
+  smsBowerCountrySearchTextById,
+  get providerCalled() { return providerCalled; },
+  loadSmsBowerCountries,
+};
+`)(createTestSelect, createTestDocument);
+
+  await api.loadSmsBowerCountries();
+
+  assert.equal(api.providerCalled, false);
+  assert.deepStrictEqual(api.selectSmsBowerCountry.options.map((option) => option.value), ['0']);
+  assert.equal(api.selectSmsBowerCountry.options[0].textContent, 'Country #0');
+});
+
+test('lookupSmsBowerServicesList fetches and filters SMSBower services without hardcoded OpenAI code', async () => {
+  const api = new Function('createTestSelect', `
+let fetchServicesState = null;
+const window = {
+  PhoneSmsProviderRegistry: {
+    createProvider(providerId) {
+      return {
+        fetchServicesList: async (state) => {
+          fetchServicesState = { providerId, state };
+          return {
+            status: 'success',
+            services: [
+              { code: 'zztest_service', name: 'ZZ Test Service' },
+              { code: 'other_service', name: 'Other Service' },
+            ],
+          };
+        },
+      };
+    },
+  },
+};
+const inputSmsBowerApiKey = { value: 'demo-key' };
+const inputSmsBowerServiceCode = { value: 'zztest' };
+const inputHeroSmsMaxPrice = { value: '' };
+const displaySmsBowerServiceLookup = { textContent: '' };
+const selectSmsBowerCountry = createTestSelect([{ value: '7', label: 'Kazakhstan', selected: true }]);
+let smsBowerCountrySelectionOrder = [7];
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
+let latestState = { smsBowerCountryOrder: [7], smsBowerServiceCode: '' };
+function getSelectedSmsBowerCountries() { return [{ id: 7, label: 'Kazakhstan' }]; }
+${extractFunction('normalizeSmsBowerCountryIdValue')}
+${extractFunction('normalizeSmsBowerCountryOrderValue')}
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+${extractFunction('normalizeSmsBowerMaxPriceValue')}
+${extractOptionalFunction('sanitizePhoneSmsSidepanelError')}
+${extractOptionalFunction('createSmsBowerSidepanelProvider')}
+${extractOptionalFunction('buildSmsBowerSidepanelState')}
+${extractOptionalFunction('normalizeSmsBowerServicesCatalog')}
+${extractFunction('lookupSmsBowerServicesList')}
+return {
+  displaySmsBowerServiceLookup,
+  get fetchServicesState() { return fetchServicesState; },
+  lookupSmsBowerServicesList,
+};
+`)(createTestSelect);
+
+  await api.lookupSmsBowerServicesList();
+
+  assert.equal(api.fetchServicesState.providerId, 'smsbower');
+  assert.equal(api.fetchServicesState.state.smsBowerApiKey, 'demo-key');
+  assert.match(api.displaySmsBowerServiceLookup.textContent, /zztest_service/);
+  assert.match(api.displaySmsBowerServiceLookup.textContent, /ZZ Test Service/);
+  assert.doesNotMatch(api.displaySmsBowerServiceLookup.textContent, /openai/i);
+});
+
+test('lookupSmsBowerServicesList requires the SMSBower API key before fetching', async () => {
+  const api = new Function(`
+let providerCalled = false;
+const window = {
+  PhoneSmsProviderRegistry: {
+    createProvider() {
+      providerCalled = true;
+      return { fetchServicesList: async () => ({ services: [] }) };
+    },
+  },
+};
+const inputSmsBowerApiKey = { value: '' };
+const inputSmsBowerServiceCode = { value: 'zztest' };
+const inputHeroSmsMaxPrice = { value: '' };
+const displaySmsBowerServiceLookup = { textContent: '' };
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+let latestState = {};
+function getSelectedSmsBowerCountries() { return []; }
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+${extractFunction('normalizeSmsBowerMaxPriceValue')}
+${extractOptionalFunction('sanitizePhoneSmsSidepanelError')}
+${extractOptionalFunction('createSmsBowerSidepanelProvider')}
+${extractOptionalFunction('buildSmsBowerSidepanelState')}
+${extractOptionalFunction('normalizeSmsBowerServicesCatalog')}
+${extractFunction('lookupSmsBowerServicesList')}
+return {
+  displaySmsBowerServiceLookup,
+  get providerCalled() { return providerCalled; },
+  lookupSmsBowerServicesList,
+};
+`)();
+
+  await api.lookupSmsBowerServicesList();
+
+  assert.equal(api.providerCalled, false);
+  assert.match(api.displaySmsBowerServiceLookup.textContent, /SMSBower API Key/);
+});
+
+test('previewHeroSmsPriceTiers queries SMSBower prices with SMSBower settings only', async () => {
+  const api = new Function('createTestSelect', `
+let priceState = null;
+let priceCountryConfig = null;
+const window = {
+  PhoneSmsProviderRegistry: {
+    createProvider(providerId) {
+      return {
+        fetchPrices: async (state, countryConfig) => {
+          priceState = { providerId, state };
+          priceCountryConfig = countryConfig;
+          return {
+            7: {
+              zztest_service: {
+                virtual1: { cost: 0.1234, count: 3 },
+              },
+            },
+          };
+        },
+      };
+    },
+  },
+};
+let latestState = { phoneSmsProvider: 'smsbower', smsBowerCountryOrder: [7], smsBowerServiceCode: 'zztest_service' };
+const PHONE_SMS_PROVIDER_HERO_SMS = 'hero-sms';
+const PHONE_SMS_PROVIDER_HERO = 'hero-sms';
+const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
+const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
+const DEFAULT_PHONE_SMS_PROVIDER = 'hero-sms';
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+const DEFAULT_FIVE_SIM_COUNTRY_ID = 'vietnam';
+const DEFAULT_FIVE_SIM_COUNTRY_LABEL = '越南 (Vietnam)';
+const DEFAULT_FIVE_SIM_OPERATOR = 'any';
+const DEFAULT_FIVE_SIM_PRODUCT = 'openai';
+const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
+const inputHeroSmsMaxPrice = { value: '0.50' };
+const inputHeroSmsApiKey = { value: 'hero-key' };
+const inputSmsBowerApiKey = { value: 'demo-key' };
+const inputSmsBowerServiceCode = { value: 'zztest_service' };
+const displayHeroSmsPriceTiers = { textContent: '' };
+const rowHeroSmsPriceTiers = { style: { display: 'none' } };
+const phoneSmsProviderOrderSelection = [];
+const selectSmsBowerCountry = createTestSelect([{ value: '7', label: 'Kazakhstan', selected: true }]);
+let smsBowerCountrySelectionOrder = [7];
+function getSelectedPhoneSmsProvider() { return 'smsbower'; }
+function getSelectedPhoneSmsProviderOrder() { return ['smsbower']; }
+function getSelectedSmsBowerCountries() { return [{ id: 7, label: 'Kazakhstan' }]; }
+async function fetch(url) { throw new Error('unexpected HeroSMS fetch ' + url); }
+${extractFunction('normalizePhoneSmsProvider')}
+${extractFunction('normalizePhoneSmsProviderValue')}
+${extractFunction('normalizePhoneSmsProviderOrderValue')}
+${extractFunction('normalizeSmsBowerCountryIdValue')}
+${extractFunction('normalizeSmsBowerCountryOrderValue')}
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+${extractFunction('normalizeSmsBowerMaxPriceValue')}
+${extractFunction('normalizeSmsBowerCountryLabel')}
+${extractFunction('normalizeHeroSmsPriceForPreview')}
+${extractFunction('formatHeroSmsPriceForPreview')}
+${extractFunction('formatPriceTiersForPreview')}
+${extractOptionalFunction('sanitizePhoneSmsSidepanelError')}
+${extractOptionalFunction('createSmsBowerSidepanelProvider')}
+${extractOptionalFunction('buildSmsBowerSidepanelState')}
+${extractOptionalFunction('collectSmsBowerPriceEntriesForPreview')}
+${extractOptionalFunction('buildSmsBowerPricePreviewLines')}
+${extractFunction('previewHeroSmsPriceTiers')}
+return {
+  displayHeroSmsPriceTiers,
+  rowHeroSmsPriceTiers,
+  get priceState() { return priceState; },
+  get priceCountryConfig() { return priceCountryConfig; },
+  previewHeroSmsPriceTiers,
+};
+`)(createTestSelect);
+
+  await api.previewHeroSmsPriceTiers();
+
+  assert.equal(api.priceState.providerId, 'smsbower');
+  assert.equal(api.priceState.state.smsBowerApiKey, 'demo-key');
+  assert.equal(api.priceState.state.smsBowerServiceCode, 'zztest_service');
+  assert.deepStrictEqual(api.priceState.state.smsBowerCountryOrder, [7]);
+  assert.equal(api.priceState.state.smsBowerMaxPrice, '0.5');
+  assert.equal(api.priceCountryConfig.id, 7);
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /SMSBower:/);
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /Kazakhstan: 最低 0\.1234/);
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /0\.1234\(x3\)/);
+  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /hero-key|service=dr|HeroSMS/);
+});
+
+test('previewPhoneSmsBalance queries SMSBower balance with the SMSBower API key', async () => {
+  const api = new Function(`
+let balanceState = null;
+const window = {
+  PhoneSmsProviderRegistry: {
+    createProvider(providerId) {
+      return {
+        fetchBalance: async (state) => {
+          balanceState = { providerId, state };
+          return { balance: 12.34, raw: 'ACCESS_BALANCE:12.34' };
+        },
+      };
+    },
+  },
+};
+let latestState = { phoneSmsProvider: 'smsbower', smsBowerServiceCode: 'zztest_service', smsBowerCountryOrder: [7] };
+const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+const inputHeroSmsApiKey = { value: 'hero-key' };
+const inputSmsBowerApiKey = { value: 'demo-key' };
+const inputSmsBowerServiceCode = { value: 'zztest_service' };
+const inputHeroSmsMaxPrice = { value: '' };
+const displayPhoneSmsBalance = { textContent: '' };
+const rowHeroSmsPriceTiers = { style: { display: 'none' } };
+function getSelectedPhoneSmsProvider() { return 'smsbower'; }
+function getSelectedSmsBowerCountries() { return [{ id: 7, label: 'Kazakhstan' }]; }
+async function fetch(url) { throw new Error('unexpected HeroSMS fetch ' + url); }
+function describeHeroSmsPreviewPayload(payload) { return typeof payload === 'string' ? payload : JSON.stringify(payload); }
+function summarizeHeroSmsPreviewError(payload, status) { return String(status || '') + describeHeroSmsPreviewPayload(payload); }
+function normalizeHeroSmsFetchErrorMessage(error) { return error?.message || String(error); }
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+${extractFunction('normalizeSmsBowerMaxPriceValue')}
+${extractFunction('formatHeroSmsPriceForPreview')}
+${extractOptionalFunction('sanitizePhoneSmsSidepanelError')}
+${extractOptionalFunction('createSmsBowerSidepanelProvider')}
+${extractOptionalFunction('buildSmsBowerSidepanelState')}
+${extractFunction('previewPhoneSmsBalance')}
+return {
+  displayPhoneSmsBalance,
+  get balanceState() { return balanceState; },
+  previewPhoneSmsBalance,
+};
+`)();
+
+  await api.previewPhoneSmsBalance();
+
+  assert.equal(api.balanceState.providerId, 'smsbower');
+  assert.equal(api.balanceState.state.smsBowerApiKey, 'demo-key');
+  assert.equal(api.balanceState.state.smsBowerServiceCode, 'zztest_service');
+  assert.equal(api.displayPhoneSmsBalance.textContent, 'SMSBower 余额 12.34');
+});
+
+test('previewPhoneSmsBalance requires SMSBower API key before fetching SMSBower balance', async () => {
+  const api = new Function(`
+let providerCalled = false;
+const window = {
+  PhoneSmsProviderRegistry: {
+    createProvider() {
+      providerCalled = true;
+      return { fetchBalance: async () => ({ balance: 0 }) };
+    },
+  },
+};
+let latestState = { phoneSmsProvider: 'smsbower' };
+const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+const inputHeroSmsApiKey = { value: 'hero-key' };
+const inputSmsBowerApiKey = { value: '' };
+const inputSmsBowerServiceCode = { value: '' };
+const inputHeroSmsMaxPrice = { value: '' };
+const displayPhoneSmsBalance = { textContent: '' };
+const rowHeroSmsPriceTiers = { style: { display: 'none' } };
+function getSelectedPhoneSmsProvider() { return 'smsbower'; }
+function getSelectedSmsBowerCountries() { return []; }
+function describeHeroSmsPreviewPayload(payload) { return String(payload); }
+function summarizeHeroSmsPreviewError(payload, status) { return String(status || '') + String(payload); }
+function normalizeHeroSmsFetchErrorMessage(error) { return error?.message || String(error); }
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+${extractFunction('normalizeSmsBowerMaxPriceValue')}
+${extractFunction('formatHeroSmsPriceForPreview')}
+${extractOptionalFunction('sanitizePhoneSmsSidepanelError')}
+${extractOptionalFunction('createSmsBowerSidepanelProvider')}
+${extractOptionalFunction('buildSmsBowerSidepanelState')}
+${extractFunction('previewPhoneSmsBalance')}
+return {
+  displayPhoneSmsBalance,
+  get providerCalled() { return providerCalled; },
+  previewPhoneSmsBalance,
+};
+`)();
+
+  await api.previewPhoneSmsBalance();
+
+  assert.equal(api.providerCalled, false);
+  assert.match(api.displayPhoneSmsBalance.textContent, /SMSBower API Key/);
 });
 
 test('hero sms max price input does not auto-save partial typing states', () => {
