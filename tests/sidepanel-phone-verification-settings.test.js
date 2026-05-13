@@ -1660,12 +1660,15 @@ const inputSmsBowerServiceCode = { value: 'zztest_service' };
 const inputHeroSmsMaxPrice = { value: '0.25' };
 const selectSmsBowerCountry = createTestSelect([{ value: '1', label: 'Country #1', selected: true }]);
 let smsBowerCountrySelectionOrder = [];
+let smsBowerCountryMenuStatusText = 'SMSBower 国家列表加载中...';
 const smsBowerCountrySearchTextById = new Map();
 const SMS_BOWER_FALLBACK_COUNTRY_ITEMS = Object.freeze([{ id: 0, label: 'Country #0' }]);
 const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
 const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
 let latestState = { smsBowerCountryOrder: [7, 1], smsBowerServiceCode: 'zztest_service', smsBowerMaxPrice: '0.25' };
+let renderCalls = 0;
 async function fetch() { throw new Error('unexpected global fetch'); }
+function renderSmsBowerCountryChoiceButtons() { renderCalls += 1; }
 function applySmsBowerCountrySelection(countries = [], options = {}) {
   appliedCountries = { countries, options };
   const selectedIds = countries.map((entry) => Number(entry?.id ?? entry)).filter(Number.isFinite);
@@ -1691,6 +1694,8 @@ return {
   selectSmsBowerCountry,
   smsBowerCountrySearchTextById,
   providerCalls,
+  get smsBowerCountryMenuStatusText() { return smsBowerCountryMenuStatusText; },
+  get renderCalls() { return renderCalls; },
   get fetchCountriesState() { return fetchCountriesState; },
   get appliedCountries() { return appliedCountries; },
   loadSmsBowerCountries,
@@ -1709,6 +1714,8 @@ return {
   assert.deepStrictEqual(api.appliedCountries.countries, [7, 1]);
   assert.equal(api.appliedCountries.options.ensureDefault, false);
   assert.match(api.smsBowerCountrySearchTextById.get(7), /Kazakhstan/);
+  assert.equal(api.smsBowerCountryMenuStatusText, '');
+  assert.ok(api.renderCalls > 0);
 });
 
 test('loadSmsBowerCountries clears placeholder and prompts when SMSBower API key is missing', async () => {
@@ -1782,12 +1789,15 @@ const inputSmsBowerServiceCode = { value: '' };
 const inputHeroSmsMaxPrice = { value: '' };
 const selectSmsBowerCountry = createTestSelect([]);
 let smsBowerCountrySelectionOrder = [];
+let smsBowerCountryMenuStatusText = '';
 const smsBowerCountrySearchTextById = new Map();
 const displaySmsBowerCountryFallbackOrder = { textContent: '' };
 const SMS_BOWER_FALLBACK_COUNTRY_ITEMS = Object.freeze([{ id: 0, label: 'Country #0' }]);
 const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
 const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
 let latestState = { smsBowerCountryOrder: [] };
+let renderCalls = 0;
+function renderSmsBowerCountryChoiceButtons() { renderCalls += 1; }
 function applySmsBowerCountrySelection(countries = [], options = {}) { return countries; }
 ${extractFunction('normalizeSmsBowerCountryIdValue')}
 ${extractFunction('normalizeSmsBowerCountryOrderValue')}
@@ -1804,6 +1814,8 @@ return {
   selectSmsBowerCountry,
   smsBowerCountrySearchTextById,
   displaySmsBowerCountryFallbackOrder,
+  get smsBowerCountryMenuStatusText() { return smsBowerCountryMenuStatusText; },
+  get renderCalls() { return renderCalls; },
   loadSmsBowerCountries,
 };
 `)(createTestSelect, createTestDocument);
@@ -1815,6 +1827,65 @@ return {
   assert.match(api.displaySmsBowerCountryFallbackOrder.textContent, /国家列表获取失败/);
   assert.doesNotMatch(api.displaySmsBowerCountryFallbackOrder.textContent, /demo-key/);
   assert.doesNotMatch(api.displaySmsBowerCountryFallbackOrder.textContent, /https:\/\//);
+  assert.match(api.smsBowerCountryMenuStatusText, /国家列表获取失败/);
+  assert.ok(api.renderCalls > 0);
+});
+
+test('loadSmsBowerCountries shows empty API payload errors instead of falling back to Country #0', async () => {
+  const api = new Function('createTestSelect', 'createTestDocument', `
+const window = {
+  PhoneSmsProviderRegistry: {
+    createProvider() {
+      return {
+        fetchCountries: async () => ({ status: 0, message: 'No access', data: [] }),
+      };
+    },
+  },
+};
+const document = createTestDocument();
+const inputSmsBowerApiKey = { value: 'demo-key' };
+const inputSmsBowerServiceCode = { value: '' };
+const inputHeroSmsMaxPrice = { value: '' };
+const selectSmsBowerCountry = createTestSelect([]);
+let smsBowerCountrySelectionOrder = [];
+let smsBowerCountryMenuStatusText = '';
+const smsBowerCountrySearchTextById = new Map();
+const displaySmsBowerCountryFallbackOrder = { textContent: '' };
+const SMS_BOWER_FALLBACK_COUNTRY_ITEMS = Object.freeze([{ id: 0, label: 'Country #0' }]);
+const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
+const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
+let latestState = { smsBowerCountryOrder: [] };
+let renderCalls = 0;
+function renderSmsBowerCountryChoiceButtons() { renderCalls += 1; }
+function applySmsBowerCountrySelection(countries = [], options = {}) { return countries; }
+${extractFunction('normalizeSmsBowerCountryIdValue')}
+${extractFunction('normalizeSmsBowerCountryOrderValue')}
+${extractFunction('normalizeSmsBowerServiceCodeValue')}
+${extractFunction('normalizeSmsBowerMaxPriceValue')}
+${extractFunction('normalizeSmsBowerCountryLabel')}
+${extractFunction('normalizeSmsBowerCountryFallbackList')}
+${extractOptionalFunction('sanitizePhoneSmsSidepanelError')}
+${extractOptionalFunction('createSmsBowerSidepanelProvider')}
+${extractOptionalFunction('buildSmsBowerSidepanelState')}
+${extractOptionalFunction('normalizeSmsBowerCountryCatalog')}
+${extractFunction('loadSmsBowerCountries')}
+return {
+  selectSmsBowerCountry,
+  smsBowerCountrySearchTextById,
+  displaySmsBowerCountryFallbackOrder,
+  get smsBowerCountryMenuStatusText() { return smsBowerCountryMenuStatusText; },
+  get renderCalls() { return renderCalls; },
+  loadSmsBowerCountries,
+};
+`)(createTestSelect, createTestDocument);
+
+  await api.loadSmsBowerCountries();
+
+  assert.deepStrictEqual(api.selectSmsBowerCountry.options.map((option) => option.textContent), []);
+  assert.equal(api.smsBowerCountrySearchTextById.size, 0);
+  assert.match(api.displaySmsBowerCountryFallbackOrder.textContent, /No access|未返回国家|国家列表/);
+  assert.match(api.smsBowerCountryMenuStatusText, /No access|未返回国家|国家列表/);
+  assert.ok(api.renderCalls > 0);
 });
 
 test('lookupSmsBowerServicesList fetches and filters SMSBower services without hardcoded OpenAI code', async () => {

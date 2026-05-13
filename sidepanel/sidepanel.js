@@ -561,6 +561,7 @@ let nexSmsCountryMenuSearchKeyword = '';
 const nexSmsCountrySearchTextById = new Map();
 let smsBowerCountrySelectionOrder = [];
 let smsBowerCountryMenuSearchKeyword = '';
+let smsBowerCountryMenuStatusText = '';
 const smsBowerCountrySearchTextById = new Map();
 let stepDefinitions = getStepDefinitionsForMode(false, {
   plusPaymentMethod: currentPlusPaymentMethod,
@@ -7178,7 +7179,7 @@ function renderSmsBowerCountryChoiceButtons() {
   if (!options.length) {
     const empty = document.createElement('span');
     empty.className = 'data-value hero-sms-country-menu-empty';
-    empty.textContent = '暂无国家选项';
+    empty.textContent = smsBowerCountryMenuStatusText || '暂无国家选项';
     smsBowerCountryMenu.appendChild(empty);
     updateSmsBowerCountryMenuSummary([]);
     return;
@@ -7327,7 +7328,11 @@ async function loadSmsBowerCountries() {
   if (!apiKey) {
     selectSmsBowerCountry.innerHTML = '';
     smsBowerCountrySelectionOrder = [];
+    smsBowerCountryMenuStatusText = '请先填写 SMSBower API Key 以加载国家列表';
     applySmsBowerCountrySelection([], { ensureDefault: false });
+    if (typeof renderSmsBowerCountryChoiceButtons === 'function') {
+      renderSmsBowerCountryChoiceButtons();
+    }
     if (displaySmsBowerCountryFallbackOrder) {
       displaySmsBowerCountryFallbackOrder.textContent = '请先填写 SMSBower API Key 以加载国家列表';
     }
@@ -7337,6 +7342,9 @@ async function loadSmsBowerCountries() {
     try {
       const provider = createSmsBowerSidepanelProvider();
       const payload = await provider.fetchCountries(buildSmsBowerSidepanelState({ smsBowerApiKey: apiKey }));
+      if (payload && typeof payload === 'object' && Number(payload.status) === 0) {
+        throw new Error(String(payload.message || 'SMSBower 未返回国家列表'));
+      }
       const preferredOrder = previousOrder.length
         ? previousOrder
         : normalizeSmsBowerCountryOrderValue(latestState?.smsBowerCountryOrder || []);
@@ -7359,16 +7367,37 @@ async function loadSmsBowerCountries() {
           selectSmsBowerCountry.appendChild(option);
           smsBowerCountrySearchTextById.set(entry.id, entry.searchText || `${option.textContent} ${entry.id}`);
         });
+        smsBowerCountryMenuStatusText = '';
         applySmsBowerCountrySelection(preferredOrder, { ensureDefault: false });
+        if (typeof renderSmsBowerCountryChoiceButtons === 'function') {
+          renderSmsBowerCountryChoiceButtons();
+        }
         return;
       }
-    } catch (error) {
+      const emptyMessage = 'SMSBower 未返回国家列表';
+      smsBowerCountryMenuStatusText = emptyMessage;
       if (displaySmsBowerCountryFallbackOrder) {
-        displaySmsBowerCountryFallbackOrder.textContent = `国家列表获取失败：${sanitizePhoneSmsSidepanelError(error, [apiKey])}`;
+        displaySmsBowerCountryFallbackOrder.textContent = emptyMessage;
       }
       selectSmsBowerCountry.innerHTML = '';
       smsBowerCountrySelectionOrder = [];
       applySmsBowerCountrySelection([], { ensureDefault: false });
+      if (typeof renderSmsBowerCountryChoiceButtons === 'function') {
+        renderSmsBowerCountryChoiceButtons();
+      }
+      return;
+    } catch (error) {
+      const errorMessage = `国家列表获取失败：${sanitizePhoneSmsSidepanelError(error, [apiKey])}`;
+      smsBowerCountryMenuStatusText = errorMessage;
+      if (displaySmsBowerCountryFallbackOrder) {
+        displaySmsBowerCountryFallbackOrder.textContent = errorMessage;
+      }
+      selectSmsBowerCountry.innerHTML = '';
+      smsBowerCountrySelectionOrder = [];
+      applySmsBowerCountrySelection([], { ensureDefault: false });
+      if (typeof renderSmsBowerCountryChoiceButtons === 'function') {
+        renderSmsBowerCountryChoiceButtons();
+      }
       return;
     }
   }
@@ -14633,14 +14662,21 @@ btnNexSmsCountryClear?.addEventListener('click', () => {
 btnSmsBowerCountryMenu?.addEventListener('click', (event) => {
   event.preventDefault();
   const nextOpen = btnSmsBowerCountryMenu.getAttribute('aria-expanded') !== 'true';
-  if (nextOpen && displaySmsBowerCountryFallbackOrder) {
-    displaySmsBowerCountryFallbackOrder.textContent = 'SMSBower 国家列表加载中...';
+  if (nextOpen) {
+    smsBowerCountryMenuStatusText = 'SMSBower 国家列表加载中...';
+    renderSmsBowerCountryChoiceButtons();
+    if (displaySmsBowerCountryFallbackOrder) {
+      displaySmsBowerCountryFallbackOrder.textContent = 'SMSBower 国家列表加载中...';
+    }
   }
   setSmsBowerCountryMenuOpen(nextOpen);
   if (nextOpen) {
     loadSmsBowerCountries().catch((error) => {
+      const errorMessage = `国家列表获取失败：${sanitizePhoneSmsSidepanelError(error, [inputSmsBowerApiKey?.value])}`;
+      smsBowerCountryMenuStatusText = errorMessage;
+      renderSmsBowerCountryChoiceButtons();
       if (displaySmsBowerCountryFallbackOrder) {
-        displaySmsBowerCountryFallbackOrder.textContent = `国家列表获取失败：${sanitizePhoneSmsSidepanelError(error, [inputSmsBowerApiKey?.value])}`;
+        displaySmsBowerCountryFallbackOrder.textContent = errorMessage;
       }
     });
   }
