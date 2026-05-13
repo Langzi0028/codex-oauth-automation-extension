@@ -7324,6 +7324,15 @@ async function loadSmsBowerCountries() {
   const previousOrder = [...smsBowerCountrySelectionOrder];
   smsBowerCountrySearchTextById.clear();
   const apiKey = String(inputSmsBowerApiKey?.value || '').trim();
+  if (!apiKey) {
+    selectSmsBowerCountry.innerHTML = '';
+    smsBowerCountrySelectionOrder = [];
+    applySmsBowerCountrySelection([], { ensureDefault: false });
+    if (displaySmsBowerCountryFallbackOrder) {
+      displaySmsBowerCountryFallbackOrder.textContent = '请先填写 SMSBower API Key 以加载国家列表';
+    }
+    return;
+  }
   if (apiKey) {
     try {
       const provider = createSmsBowerSidepanelProvider();
@@ -14226,6 +14235,10 @@ inputSmsBowerApiKey?.addEventListener('input', () => {
   scheduleSettingsAutoSave();
 });
 inputSmsBowerApiKey?.addEventListener('blur', () => {
+  if (typeof getSelectedPhoneSmsProvider === 'function'
+    && getSelectedPhoneSmsProvider() === PHONE_SMS_PROVIDER_SMSBOWER) {
+    loadSmsBowerCountries().catch(() => { });
+  }
   saveSettings({ silent: true }).catch(() => { });
 });
 

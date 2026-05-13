@@ -322,6 +322,10 @@ test('sidepanel source recognizes SMSBower settings, normalizers, labels, and pa
   assert.match(sidepanelSource, /smsBowerCountryProviderIds:/);
   assert.match(sidepanelSource, /smsBowerMaxPrice:/);
   assert.match(sidepanelSource, /return 'SMSBower';/);
+  assert.match(
+    sidepanelSource,
+    /inputSmsBowerApiKey\?\.addEventListener\('blur', \(\) => \{[\s\S]{0,700}loadSmsBowerCountries/
+  );
 });
 
 test('collectSettingsPayload persists SMSBower settings from sidepanel inputs', () => {
@@ -1688,7 +1692,7 @@ return {
   assert.match(api.smsBowerCountrySearchTextById.get(7), /Kazakhstan/);
 });
 
-test('loadSmsBowerCountries keeps fallback when SMSBower API key is missing', async () => {
+test('loadSmsBowerCountries clears placeholder and prompts when SMSBower API key is missing', async () => {
   const api = new Function('createTestSelect', 'createTestDocument', `
 let providerCalled = false;
 const window = {
@@ -1703,9 +1707,10 @@ const document = createTestDocument();
 const inputSmsBowerApiKey = { value: '' };
 const inputSmsBowerServiceCode = { value: '' };
 const inputHeroSmsMaxPrice = { value: '' };
-const selectSmsBowerCountry = createTestSelect([]);
-let smsBowerCountrySelectionOrder = [];
+const selectSmsBowerCountry = createTestSelect([{ value: '1', label: 'Country #1', selected: true }]);
+let smsBowerCountrySelectionOrder = [1];
 const smsBowerCountrySearchTextById = new Map();
+const displaySmsBowerCountryFallbackOrder = { textContent: '' };
 const SMS_BOWER_FALLBACK_COUNTRY_ITEMS = Object.freeze([{ id: 0, label: 'Country #0' }]);
 const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
 const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
@@ -1725,6 +1730,7 @@ ${extractFunction('loadSmsBowerCountries')}
 return {
   selectSmsBowerCountry,
   smsBowerCountrySearchTextById,
+  displaySmsBowerCountryFallbackOrder,
   get providerCalled() { return providerCalled; },
   loadSmsBowerCountries,
 };
@@ -1733,8 +1739,9 @@ return {
   await api.loadSmsBowerCountries();
 
   assert.equal(api.providerCalled, false);
-  assert.deepStrictEqual(api.selectSmsBowerCountry.options.map((option) => option.value), ['0']);
-  assert.equal(api.selectSmsBowerCountry.options[0].textContent, 'Country #0');
+  assert.deepStrictEqual(api.selectSmsBowerCountry.options.map((option) => option.value), []);
+  assert.equal(api.smsBowerCountrySearchTextById.size, 0);
+  assert.match(api.displaySmsBowerCountryFallbackOrder.textContent, /SMSBower API Key/);
 });
 
 test('lookupSmsBowerServicesList fetches and filters SMSBower services without hardcoded OpenAI code', async () => {
