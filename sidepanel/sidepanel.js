@@ -4672,7 +4672,10 @@ function sanitizePhoneSmsSidepanelError(error, secrets = []) {
 }
 
 function createSmsBowerSidepanelProvider() {
-  const deps = typeof fetch === 'function' ? { fetchImpl: fetch } : {};
+  const fetchSource = typeof window !== 'undefined' && typeof window.fetch === 'function'
+    ? window.fetch.bind(window)
+    : (typeof fetch === 'function' ? fetch : null);
+  const deps = fetchSource ? { fetchImpl: fetchSource } : {};
   if (typeof window !== 'undefined') {
     if (window.PhoneSmsProviderRegistry?.createProvider) {
       return window.PhoneSmsProviderRegistry.createProvider('smsbower', deps);

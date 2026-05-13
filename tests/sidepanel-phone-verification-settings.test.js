@@ -1640,11 +1640,18 @@ const fakeProvider = {
     };
   },
 };
+let fetchThisValue = null;
 const window = {
+  fetch: async function fetchImpl() { fetchThisValue = this; return { ok: true }; },
   PhoneSmsProviderRegistry: {
     createProvider(providerId, deps) {
       providerCalls.push({ source: 'registry', providerId, deps });
-      return fakeProvider;
+      return {
+        fetchCountries: async (state) => {
+          await deps.fetchImpl('https://smsbower.example.test/countries');
+          return fakeProvider.fetchCountries(state);
+        },
+      };
     },
   },
   PhoneSmsBowerProvider: {
@@ -1662,6 +1669,7 @@ const selectSmsBowerCountry = createTestSelect([{ value: '1', label: 'Country #1
 let smsBowerCountrySelectionOrder = [];
 let smsBowerCountryMenuStatusText = 'SMSBower 国家列表加载中...';
 const smsBowerCountrySearchTextById = new Map();
+const displaySmsBowerCountryFallbackOrder = { textContent: '' };
 const SMS_BOWER_FALLBACK_COUNTRY_ITEMS = Object.freeze([{ id: 0, label: 'Country #0' }]);
 const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
 const DEFAULT_SMS_BOWER_SERVICE_CODE = '';
@@ -1694,6 +1702,8 @@ return {
   selectSmsBowerCountry,
   smsBowerCountrySearchTextById,
   providerCalls,
+  windowObject: window,
+  get fetchThisValue() { return fetchThisValue; },
   get smsBowerCountryMenuStatusText() { return smsBowerCountryMenuStatusText; },
   get renderCalls() { return renderCalls; },
   get fetchCountriesState() { return fetchCountriesState; },
@@ -1705,6 +1715,7 @@ return {
   await api.loadSmsBowerCountries();
 
   assert.equal(api.providerCalls.length, 1);
+  assert.equal(api.fetchThisValue, api.windowObject);
   assert.equal(api.fetchCountriesState.smsBowerApiKey, 'demo-key');
   assert.equal(api.fetchCountriesState.smsBowerServiceCode, 'zztest_service');
   assert.equal(api.fetchCountriesState.smsBowerMaxPrice, '0.25');
