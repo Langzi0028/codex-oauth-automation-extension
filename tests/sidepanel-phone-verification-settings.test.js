@@ -2005,8 +2005,8 @@ const window = {
           priceState = { providerId, state };
           priceCountryConfig = countryConfig;
           return [
-            { countryId: '73', serviceCode: 'zztest_service', providerId: '67013', price: 0.059, count: 12 },
             { countryId: '73', serviceCode: 'zztest_service', providerId: '777', price: 0.71, count: 0 },
+            { countryId: '73', serviceCode: 'zztest_service', providerId: '67013', price: 0.059, count: 12 },
           ];
         },
         fetchPrices: async (state, countryConfig) => {
@@ -2081,10 +2081,15 @@ return {
   assert.equal(api.priceState.state.smsBowerMaxPrice, '0.5');
   assert.equal(api.priceCountryConfig.id, 73);
   assert.match(api.displayHeroSmsPriceTiers.textContent, /SMSBower:/);
-  assert.match(api.displayHeroSmsPriceTiers.textContent, /Brazil:\n供应商 67013：0\.059（库存 12）/);
-  assert.match(api.displayHeroSmsPriceTiers.textContent, /供应商 777：0\.71↑（库存 0）/);
-  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /Brazil: 最低|0\.059\(x12\)|0\.059\(x67013\)/);
-  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /hero-key|service=dr|HeroSMS/);
+  const previewText = api.displayHeroSmsPriceTiers.textContent;
+  assert.match(previewText, /Brazil:\n供应商 67013：0\.059（库存 12）/);
+  assert.match(previewText, /供应商 777：0\.71↑（库存 0）/);
+  assert.ok(
+    previewText.indexOf('供应商 67013：0.059（库存 12）') < previewText.indexOf('供应商 777：0.71↑（库存 0）'),
+    previewText
+  );
+  assert.doesNotMatch(previewText, /Brazil: 最低|0\.059\(x12\)|0\.059\(x67013\)/);
+  assert.doesNotMatch(previewText, /hero-key|service=dr|HeroSMS/);
 });
 
 test('previewHeroSmsPriceTiers filters SMSBower provider stats locally by country provider IDs', async () => {

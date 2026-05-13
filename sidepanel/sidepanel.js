@@ -7650,7 +7650,8 @@ async function buildSmsBowerPricePreviewLines(options = {}) {
             count: Math.max(0, Math.floor(count)),
           };
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        .sort((left, right) => left.price - right.price || left.providerId.localeCompare(right.providerId));
       if (!providerEntries.length) {
         previews.push(`${countryLabel}: 暂无可用号源`);
         continue;
