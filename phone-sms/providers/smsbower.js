@@ -163,6 +163,99 @@
       .join('\n');
   }
 
+  function normalizeSmsBowerProviderStats(payload = {}, options = {}) {
+    const fallbackCountryId = normalizeSmsBowerCountryId(options.countryId, '');
+    const fallbackServiceCode = normalizeSmsBowerServiceCode(options.serviceCode);
+    const rows = [];
+
+    const normalizeRow = (row, context = {}) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return null;
+      }
+      const providerId = normalizeSmsBowerProviderId(
+        row.provider_id ?? row.providerId ?? row.provider ?? row.id,
+        context.providerId || ''
+      );
+      const price = Number(row.price ?? row.cost ?? row.rate);
+      const count = Number(row.count ?? row.quantity ?? row.stock ?? row.available);
+      const countryId = normalizeSmsBowerCountryId(
+        row.country ?? row.countryId ?? row.countryCode,
+        context.countryId || fallbackCountryId
+      );
+      const serviceCode = normalizeSmsBowerServiceCode(
+        row.service ?? row.serviceCode ?? context.serviceCode ?? fallbackServiceCode
+      );
+
+      if (!providerId || !countryId || !serviceCode || !Number.isFinite(price) || price <= 0 || !Number.isFinite(count) || count < 0) {
+        return null;
+      }
+      return {
+        countryId,
+        serviceCode,
+        providerId,
+        price: Math.round(price * 10000) / 10000,
+        count: Math.max(0, Math.floor(count)),
+      };
+    };
+
+    const appendRow = (row, context = {}) => {
+      const normalized = normalizeRow(row, context);
+      if (normalized) {
+        rows.push(normalized);
+      }
+    };
+
+    if (Array.isArray(payload)) {
+      payload.forEach((row) => appendRow(row, { countryId: fallbackCountryId, serviceCode: fallbackServiceCode }));
+      return rows;
+    }
+    if (!payload || typeof payload !== 'object') {
+      return rows;
+    }
+
+    const directRow = normalizeRow(payload, { countryId: fallbackCountryId, serviceCode: fallbackServiceCode });
+    if (directRow) {
+      rows.push(directRow);
+      return rows;
+    }
+
+    Object.entries(payload).forEach(([countryKey, countryValue]) => {
+      const countryId = normalizeSmsBowerCountryId(countryKey, fallbackCountryId);
+      if (!countryId || (fallbackCountryId && countryId !== fallbackCountryId)) {
+        return;
+      }
+      if (!countryValue || typeof countryValue !== 'object' || Array.isArray(countryValue)) {
+        return;
+      }
+      const serviceEntries = fallbackServiceCode && Object.prototype.hasOwnProperty.call(countryValue, fallbackServiceCode)
+        ? [[fallbackServiceCode, countryValue[fallbackServiceCode]]]
+        : Object.entries(countryValue);
+      serviceEntries.forEach(([serviceKey, serviceValue]) => {
+        const serviceCode = normalizeSmsBowerServiceCode(serviceKey || fallbackServiceCode);
+        if (!serviceCode || (fallbackServiceCode && serviceCode !== fallbackServiceCode)) {
+          return;
+        }
+        if (Array.isArray(serviceValue)) {
+          serviceValue.forEach((row) => appendRow(row, { countryId, serviceCode }));
+          return;
+        }
+        if (!serviceValue || typeof serviceValue !== 'object') {
+          return;
+        }
+        const serviceRow = normalizeRow(serviceValue, { countryId, serviceCode });
+        if (serviceRow) {
+          rows.push(serviceRow);
+          return;
+        }
+        Object.entries(serviceValue).forEach(([providerKey, row]) => {
+          appendRow(row, { countryId, serviceCode, providerId: providerKey });
+        });
+      });
+    });
+
+    return rows;
+  }
+
   function normalizeSmsBowerMaxPrice(value = '') {
     const rawValue = String(value ?? '').trim();
     if (!rawValue) {
@@ -541,6 +634,25 @@
     }, 'SMSBower prices request');
   }
 
+  async function fetchProviderStats(state = {}, countryConfig = {}, deps = {}) {
+    const activationConfig = resolveActivationConfig(state);
+    const countryId = normalizeSmsBowerCountryId(
+      activationConfig.countryId,
+      countryConfig && typeof countryConfig === 'object'
+        ? (countryConfig.id ?? countryConfig.countryId ?? countryConfig.country ?? '')
+        : countryConfig
+    );
+    const payload = await fetchSmsBower(state, deps, {
+      action: 'getPricesV3',
+      service: activationConfig.serviceCode,
+      country: countryId,
+    }, 'SMSBower provider statistics request');
+    return normalizeSmsBowerProviderStats(payload, {
+      countryId,
+      serviceCode: activationConfig.serviceCode,
+    });
+  }
+
   async function fetchServicesList(state = {}, deps = {}) {
     return fetchSmsBower(state, deps, { action: 'getServicesList' }, 'SMSBower services request');
   }
@@ -573,6 +685,7 @@
       fetchBalance: (state) => fetchBalance(state, providerDeps),
       fetchCountries: (state) => fetchCountries(state, providerDeps),
       fetchPrices: (state, countryConfig) => fetchPrices(state, countryConfig, providerDeps),
+      fetchProviderStats: (state, countryConfig) => fetchProviderStats(state, countryConfig, providerDeps),
       fetchServicesList: (state) => fetchServicesList(state, providerDeps),
       describePayload,
     };
@@ -589,6 +702,7 @@
     normalizeSmsBowerProviderId,
     normalizeSmsBowerCountryProviderIds,
     formatSmsBowerCountryProviderIds,
+    normalizeSmsBowerProviderStats,
     normalizeSmsBowerMaxPrice,
     normalizeSmsBowerServiceCode,
   };

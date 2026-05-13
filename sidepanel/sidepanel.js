@@ -4827,6 +4827,129 @@ function collectSmsBowerPriceEntriesForPreview(payload, entries = []) {
   return entries;
 }
 
+function normalizeSmsBowerProviderStatsForPreview(payload = {}, options = {}) {
+  const fallbackCountryIdNumber = normalizeSmsBowerCountryIdValue(options?.countryId, -1);
+  const fallbackCountryId = fallbackCountryIdNumber >= 0 ? String(fallbackCountryIdNumber) : '';
+  const fallbackServiceCode = normalizeSmsBowerServiceCodeValue(options?.serviceCode || '');
+  const rows = [];
+
+  const normalizeProviderId = (value = '', fallback = '') => {
+    const direct = String(value ?? '').trim();
+    if (/^\d+$/.test(direct) && Number(direct) > 0) {
+      return direct;
+    }
+    const fallbackText = String(fallback ?? '').trim();
+    return /^\d+$/.test(fallbackText) && Number(fallbackText) > 0 ? fallbackText : '';
+  };
+  const normalizeRow = (row, context = {}) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return null;
+    }
+    const providerId = normalizeProviderId(row.provider_id ?? row.providerId ?? row.provider ?? row.id, context.providerId || '');
+    const countryIdNumber = normalizeSmsBowerCountryIdValue(
+      row.country ?? row.countryId ?? row.countryCode,
+      normalizeSmsBowerCountryIdValue(context.countryId || fallbackCountryId, -1)
+    );
+    const countryId = countryIdNumber >= 0 ? String(countryIdNumber) : '';
+    const serviceCode = normalizeSmsBowerServiceCodeValue(row.service ?? row.serviceCode ?? context.serviceCode ?? fallbackServiceCode);
+    const price = Number(row.price ?? row.cost ?? row.rate);
+    const count = Number(row.count ?? row.quantity ?? row.stock ?? row.available);
+    if (!providerId || !countryId || !serviceCode || !Number.isFinite(price) || price <= 0 || !Number.isFinite(count) || count < 0) {
+      return null;
+    }
+    return {
+      countryId,
+      serviceCode,
+      providerId,
+      price: Math.round(price * 10000) / 10000,
+      count: Math.max(0, Math.floor(count)),
+    };
+  };
+  const appendRow = (row, context = {}) => {
+    const normalized = normalizeRow(row, context);
+    if (normalized) {
+      rows.push(normalized);
+    }
+  };
+
+  if (Array.isArray(payload)) {
+    payload.forEach((row) => appendRow(row, { countryId: fallbackCountryId, serviceCode: fallbackServiceCode }));
+    return rows;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return rows;
+  }
+  const directRow = normalizeRow(payload, { countryId: fallbackCountryId, serviceCode: fallbackServiceCode });
+  if (directRow) {
+    rows.push(directRow);
+    return rows;
+  }
+
+  Object.entries(payload).forEach(([countryKey, countryValue]) => {
+    const countryIdNumber = normalizeSmsBowerCountryIdValue(countryKey, fallbackCountryIdNumber);
+    if (countryIdNumber < 0 || (fallbackCountryIdNumber >= 0 && countryIdNumber !== fallbackCountryIdNumber)) {
+      return;
+    }
+    if (!countryValue || typeof countryValue !== 'object' || Array.isArray(countryValue)) {
+      return;
+    }
+    const countryId = String(countryIdNumber);
+    const serviceEntries = fallbackServiceCode && Object.prototype.hasOwnProperty.call(countryValue, fallbackServiceCode)
+      ? [[fallbackServiceCode, countryValue[fallbackServiceCode]]]
+      : Object.entries(countryValue);
+    serviceEntries.forEach(([serviceKey, serviceValue]) => {
+      const serviceCode = normalizeSmsBowerServiceCodeValue(serviceKey || fallbackServiceCode);
+      if (!serviceCode || (fallbackServiceCode && serviceCode !== fallbackServiceCode)) {
+        return;
+      }
+      if (Array.isArray(serviceValue)) {
+        serviceValue.forEach((row) => appendRow(row, { countryId, serviceCode }));
+        return;
+      }
+      if (!serviceValue || typeof serviceValue !== 'object') {
+        return;
+      }
+      const serviceRow = normalizeRow(serviceValue, { countryId, serviceCode });
+      if (serviceRow) {
+        rows.push(serviceRow);
+        return;
+      }
+      Object.entries(serviceValue).forEach(([providerKey, row]) => {
+        appendRow(row, { countryId, serviceCode, providerId: providerKey });
+      });
+    });
+  });
+
+  return rows;
+}
+
+function getSmsBowerProviderIdFilterForCountry(value = '', countryId = '') {
+  const normalizedText = normalizeSmsBowerCountryProviderIdsValue(value || '');
+  const targetCountryId = normalizeSmsBowerCountryIdValue(countryId, -1);
+  if (targetCountryId < 0 || !normalizedText) {
+    return null;
+  }
+  const matchedLine = normalizedText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => {
+      const separatorIndex = line.indexOf(':');
+      if (separatorIndex < 0) {
+        return false;
+      }
+      return normalizeSmsBowerCountryIdValue(line.slice(0, separatorIndex), -1) === targetCountryId;
+    });
+  if (!matchedLine) {
+    return null;
+  }
+  const providerIds = matchedLine
+    .slice(matchedLine.indexOf(':') + 1)
+    .split(/[,，;；\s]+/)
+    .map((entry) => String(entry || '').trim())
+    .filter((entry, index, source) => /^\d+$/.test(entry) && Number(entry) > 0 && source.indexOf(entry) === index);
+  return providerIds.length ? new Set(providerIds) : null;
+}
+
 function getFiveSimCountryDisplayNameByIso(isoCode = '') {
   const normalizedIso = String(isoCode || '').trim().toUpperCase();
   if (!normalizedIso || typeof Intl === 'undefined' || typeof Intl.DisplayNames !== 'function') {
@@ -7503,10 +7626,20 @@ async function buildSmsBowerPricePreviewLines(options = {}) {
         smsBowerCountryId: country.id,
         smsBowerCountryLabel: countryLabel,
       };
-      const payload = await provider.fetchPrices(state, { id: country.id, label: countryLabel });
-      const tierEntries = collectSmsBowerPriceEntriesForPreview(payload, []);
+      const payload = await provider.fetchProviderStats(state, { id: country.id, label: countryLabel });
+      const providerStats = normalizeSmsBowerProviderStatsForPreview(payload, {
+        countryId: country.id,
+        serviceCode,
+      });
+      const providerIdFilter = getSmsBowerProviderIdFilterForCountry(
+        inputSmsBowerCountryProviderIds?.value || latestState?.smsBowerCountryProviderIds || '',
+        country.id
+      );
+      const tierEntries = providerStats
+        .filter((entry) => !providerIdFilter || providerIdFilter.has(String(entry.providerId)))
+        .map((entry) => ({ price: entry.price, count: entry.count }));
       const availablePrices = tierEntries
-        .filter((entry) => entry.count === null || entry.count > 0)
+        .filter((entry) => entry.count > 0)
         .map((entry) => Number(entry.price))
         .filter((price) => Number.isFinite(price) && price > 0)
         .sort((left, right) => left - right);

@@ -325,10 +325,67 @@ test('SMSBower provider catalog helpers call prices, services, and countries act
   assert.deepStrictEqual(prices, { 1: { ot: { cost: 1.25, count: 3 } } });
   assert.deepStrictEqual(services, { ot: 'OpenAI' });
   assert.deepStrictEqual(countries, { 1: 'United States', 7: 'Kazakhstan' });
+  assert.equal(requests[0].searchParams.get('service'), 'ot');
+  assert.equal(requests[0].searchParams.get('country'), '1');
+  assert.equal(requests[0].searchParams.get('providerIds'), null);
   assert.deepStrictEqual(
     requests.map((url) => url.searchParams.get('action')),
     ['getPrices', 'getServicesList', 'getCountries']
   );
+});
+
+test('SMSBower provider fetches V3 provider statistics without endpoint provider filtering', async () => {
+  const requests = [];
+  const provider = api.createProvider({
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      requests.push(parsed);
+      assert.equal(parsed.searchParams.get('action'), 'getPricesV3');
+      return createTextResponse({
+        73: {
+          zztest_service: [
+            { provider_id: 67013, price: 0.059, count: 12 },
+            { provider_id: 777, price: '0.071', count: '0' },
+          ],
+        },
+      });
+    },
+  });
+
+  const stats = await provider.fetchProviderStats({
+    smsBowerApiKey: 'demo-key',
+    smsBowerServiceCode: 'zztest_service',
+    smsBowerCountryId: '73',
+    smsBowerProviderId: '67013',
+  });
+
+  assert.equal(requests[0].searchParams.get('service'), 'zztest_service');
+  assert.equal(requests[0].searchParams.get('country'), '73');
+  assert.equal(requests[0].searchParams.get('providerIds'), null);
+  assert.deepStrictEqual(stats, [
+    { countryId: '73', serviceCode: 'zztest_service', providerId: '67013', price: 0.059, count: 12 },
+    { countryId: '73', serviceCode: 'zztest_service', providerId: '777', price: 0.071, count: 0 },
+  ]);
+});
+
+test('SMSBower provider does not treat V2 price tiers as provider statistics', async () => {
+  const provider = api.createProvider({
+    fetchImpl: async () => createTextResponse({
+      73: {
+        zztest_service: {
+          '0.059': 67013,
+        },
+      },
+    }),
+  });
+
+  const stats = await provider.fetchProviderStats({
+    smsBowerApiKey: 'demo-key',
+    smsBowerServiceCode: 'zztest_service',
+    smsBowerCountryId: '73',
+  });
+
+  assert.deepStrictEqual(stats, []);
 });
 
 test('SMSBower provider is registered in phone SMS provider registry', () => {
