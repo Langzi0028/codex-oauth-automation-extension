@@ -337,6 +337,16 @@ test('sidepanel reloads SMSBower countries after restoring a saved SMSBower API 
   );
 });
 
+test('sidepanel reloads SMSBower countries before opening the country menu', () => {
+  const listenerSource = sidepanelSource.slice(
+    sidepanelSource.indexOf("btnSmsBowerCountryMenu?.addEventListener('click'"),
+    sidepanelSource.indexOf("btnSmsBowerCountryClear?.addEventListener('click'")
+  );
+
+  assert.match(listenerSource, /loadSmsBowerCountries\(\)\.catch/);
+  assert.match(listenerSource, /setSmsBowerCountryMenuOpen\(nextOpen\)/);
+});
+
 test('collectSettingsPayload persists SMSBower settings from sidepanel inputs', () => {
   const api = new Function('normalizeIcloudTargetMailboxType', 'normalizeIcloudForwardMailProvider', `
 const window = {};

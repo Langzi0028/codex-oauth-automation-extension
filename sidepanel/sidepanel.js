@@ -14629,7 +14629,17 @@ btnNexSmsCountryClear?.addEventListener('click', () => {
 btnSmsBowerCountryMenu?.addEventListener('click', (event) => {
   event.preventDefault();
   const nextOpen = btnSmsBowerCountryMenu.getAttribute('aria-expanded') !== 'true';
+  if (nextOpen && displaySmsBowerCountryFallbackOrder) {
+    displaySmsBowerCountryFallbackOrder.textContent = 'SMSBower 国家列表加载中...';
+  }
   setSmsBowerCountryMenuOpen(nextOpen);
+  if (nextOpen) {
+    loadSmsBowerCountries().catch((error) => {
+      if (displaySmsBowerCountryFallbackOrder) {
+        displaySmsBowerCountryFallbackOrder.textContent = `国家列表获取失败：${sanitizePhoneSmsSidepanelError(error, [inputSmsBowerApiKey?.value])}`;
+      }
+    });
+  }
 });
 
 btnSmsBowerCountryClear?.addEventListener('click', () => {
