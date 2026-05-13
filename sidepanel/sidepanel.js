@@ -7635,26 +7635,32 @@ async function buildSmsBowerPricePreviewLines(options = {}) {
         inputSmsBowerCountryProviderIds?.value || latestState?.smsBowerCountryProviderIds || '',
         country.id
       );
-      const tierEntries = providerStats
+      const providerEntries = providerStats
         .filter((entry) => !providerIdFilter || providerIdFilter.has(String(entry.providerId)))
-        .map((entry) => ({ price: entry.price, count: entry.count }));
-      const availablePrices = tierEntries
-        .filter((entry) => entry.count > 0)
-        .map((entry) => Number(entry.price))
-        .filter((price) => Number.isFinite(price) && price > 0)
-        .sort((left, right) => left - right);
-      if (!availablePrices.length) {
+        .map((entry) => {
+          const providerId = String(entry?.providerId || '').trim();
+          const price = Number(entry?.price);
+          const count = Number(entry?.count);
+          if (!providerId || !Number.isFinite(price) || price <= 0 || !Number.isFinite(count) || count < 0) {
+            return null;
+          }
+          return {
+            providerId,
+            price: Math.round(price * 10000) / 10000,
+            count: Math.max(0, Math.floor(count)),
+          };
+        })
+        .filter(Boolean);
+      if (!providerEntries.length) {
         previews.push(`${countryLabel}: 暂无可用号源`);
         continue;
       }
-      const lowest = availablePrices[0];
-      const lowestText = formatHeroSmsPriceForPreview(lowest) || String(lowest);
-      const tierText = formatPriceTiersForPreview(tierEntries, { maxPrice });
-      if (Number.isFinite(maxPrice) && maxPrice > 0 && lowest > maxPrice) {
-        previews.push(`${countryLabel}: 最低 ${lowestText}（高于上限 ${formatHeroSmsPriceForPreview(maxPrice) || maxPrice}）${tierText ? `；档位：${tierText}` : ''}`);
-      } else {
-        previews.push(`${countryLabel}: 最低 ${lowestText}${tierText ? `；档位：${tierText}` : ''}`);
-      }
+      const providerLines = providerEntries.map((entry) => {
+        const priceText = formatHeroSmsPriceForPreview(entry.price) || String(entry.price);
+        const overLimitText = Number.isFinite(maxPrice) && maxPrice > 0 && entry.price > maxPrice ? '↑' : '';
+        return `供应商 ${entry.providerId}：${priceText}${overLimitText}（库存 ${entry.count}）`;
+      });
+      previews.push(`${countryLabel}:\n${providerLines.join('\n')}`);
     } catch (error) {
       previews.push(`${countryLabel}: 查询失败（${sanitizePhoneSmsSidepanelError(error, [apiKey])}）`);
     }

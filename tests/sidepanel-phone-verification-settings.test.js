@@ -1993,7 +1993,7 @@ return {
   assert.match(api.displaySmsBowerServiceLookup.textContent, /SMSBower API Key/);
 });
 
-test('previewHeroSmsPriceTiers queries SMSBower provider stats with SMSBower settings only', async () => {
+test('previewHeroSmsPriceTiers queries SMSBower provider stats and renders provider-aware lines', async () => {
   const api = new Function('createTestSelect', `
 let priceState = null;
 let priceCountryConfig = null;
@@ -2006,7 +2006,7 @@ const window = {
           priceCountryConfig = countryConfig;
           return [
             { countryId: '73', serviceCode: 'zztest_service', providerId: '67013', price: 0.059, count: 12 },
-            { countryId: '73', serviceCode: 'zztest_service', providerId: '777', price: 0.071, count: 0 },
+            { countryId: '73', serviceCode: 'zztest_service', providerId: '777', price: 0.71, count: 0 },
           ];
         },
         fetchPrices: async (state, countryConfig) => {
@@ -2081,9 +2081,9 @@ return {
   assert.equal(api.priceState.state.smsBowerMaxPrice, '0.5');
   assert.equal(api.priceCountryConfig.id, 73);
   assert.match(api.displayHeroSmsPriceTiers.textContent, /SMSBower:/);
-  assert.match(api.displayHeroSmsPriceTiers.textContent, /Brazil: 最低 0\.059/);
-  assert.match(api.displayHeroSmsPriceTiers.textContent, /0\.059\(x12\)/);
-  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /0\.059\(x67013\)/);
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /Brazil:\n供应商 67013：0\.059（库存 12）/);
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /供应商 777：0\.71↑（库存 0）/);
+  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /Brazil: 最低|0\.059\(x12\)|0\.059\(x67013\)/);
   assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /hero-key|service=dr|HeroSMS/);
 });
 
@@ -2166,9 +2166,8 @@ return {
 
   assert.equal(api.priceState.providerId, 'smsbower');
   assert.equal(api.priceState.state.smsBowerApiKey, 'demo-key');
-  assert.match(api.displayHeroSmsPriceTiers.textContent, /Brazil: 最低 0\.059/);
-  assert.match(api.displayHeroSmsPriceTiers.textContent, /0\.059\(x12\)/);
-  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /0\.041|x20|777/);
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /Brazil:\n供应商 67013：0\.059（库存 12）/);
+  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /供应商 777|0\.041|库存 20|0\.059\(x12\)/);
 });
 
 test('previewHeroSmsPriceTiers does not render SMSBower V2 price tiers as provider stock', async () => {
@@ -2247,7 +2246,7 @@ return {
   await api.previewHeroSmsPriceTiers();
 
   assert.match(api.displayHeroSmsPriceTiers.textContent, /Brazil: 暂无可用号源/);
-  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /0\.059\(x67013\)/);
+  assert.doesNotMatch(api.displayHeroSmsPriceTiers.textContent, /供应商 67013|0\.059\(x67013\)/);
 });
 
 test('previewPhoneSmsBalance queries SMSBower balance with the SMSBower API key', async () => {
